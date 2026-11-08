@@ -291,7 +291,7 @@ tailscale_url() {
     printf '%s' "$TS_TUNNEL_URL"
     return 0
   fi
-  tailscale status --json 2>/dev/null | python3 -c '
+  tailscale status --json </dev/null 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -304,7 +304,7 @@ if name:
 }
 
 ts_backend_state() {
-  tailscale status --json 2>/dev/null | python3 -c '
+  tailscale status --json </dev/null 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -320,7 +320,7 @@ print(d.get("BackendState") or "")
 # `--json` exits 0 whenever the daemon answers, whatever the login state.
 ts_daemon_up() {
   [[ -S "${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}" ]] || return 1
-  tailscale status --json >/dev/null 2>&1
+  tailscale status --json </dev/null >/dev/null 2>&1
 }
 
 start_tailscale() {
@@ -368,7 +368,7 @@ start_tailscale() {
     if ! timeout 120 tailscale up \
         --authkey="$TS_AUTHKEY" \
         --hostname="$TS_NODE" \
-        --accept-routes=false >"${SD}/tailscale-up.log" 2>&1; then
+        --accept-routes=false </dev/null >"${SD}/tailscale-up.log" 2>&1; then
       cs_dump_log "${SD}/tailscale-up.log" 20
       # Retrying cannot fix a bad credential, so exit 2 ("unrecoverable") and let
       # supervise.sh stop instead of burning its restart budget.
@@ -379,13 +379,23 @@ start_tailscale() {
   else
     # Already joined: keep the name in sync without a new auth (renames on
     # restart would otherwise silently keep the old URL).
-    tailscale set --hostname="$TS_NODE" >/dev/null 2>&1 \
+    tailscale set --hostname="$TS_NODE" </dev/null >/dev/null 2>&1 \
       || warn "could not apply TS_HOSTNAME=${TS_NODE} to a running node"
   fi
 
   log "enabling Funnel for 127.0.0.1:${PORT}"
-  if ! timeout 120 tailscale funnel --bg "$PORT" >"${SD}/tailscale-funnel.log" 2>&1; then
+  if ! timeout 60 tailscale funnel --bg "$PORT" </dev/null \
+      >"${SD}/tailscale-funnel.log" 2>&1; then
     cs_dump_log "${SD}/tailscale-funnel.log" 20
+    local enable_url
+    enable_url="$(grep -oE 'https://login\.tailscale\.com/f/funnel[^[:space:]]*' \
+      "${SD}/tailscale-funnel.log" 2>/dev/null | head -1 || true)"
+    if [[ -n "$enable_url" ]]; then
+      # Retrying cannot fix this: an admin has to approve Funnel for the tailnet.
+      printf '%serr%s Funnel is disabled for this tailnet. Approve it once, then re-run:\n  %s\n' \
+        "$CS_C_RED" "$CS_C_RESET" "$enable_url" >&2
+      exit 2
+    fi
     return 1
   fi
 

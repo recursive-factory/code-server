@@ -309,6 +309,8 @@ tunnel credentials, live processes, port state, established connections,
 | `port 8080 is busy` | an orphan from an earlier run; `serve.sh` reclaims it automatically when it looks like ours. If it cannot, the pid and argv are printed — free it or use `--port=<n>` |
 | restart loop, never reaching a URL | a previous supervisor is still alive relaunching the stack. `stop.sh` kills the supervisor *first*, then reclaims the port |
 | `safesocket.Listen: ... address already in use` | a second `tailscaled` was started while one was live. Fixed: liveness now uses `tailscale status --json` (exits 0 whenever the daemon answers) instead of `tailscale status`, which exits 1 merely because the node is logged out |
+| `Funnel is disabled for this tailnet` | one-time approval: the error prints a `https://login.tailscale.com/f/funnel?node=...` link. Open it as the tailnet owner, approve, then re-run. `serve.sh` exits 2 here instead of retrying, because no retry can grant it |
+| Funnel configured but the hostname resets TLS / times out | same cause: the ingress refuses until the tailnet has Funnel enabled, even though `tailscale funnel status` already shows the proxy |
 | `tailscale could not join` | expired key, or a single-use key already consumed. Exits 2 so the supervisor stops instead of retrying something a retry cannot fix |
 | stuck on `waiting for cloudflared URL` | quick-tunnel registration is slow or rate-limited; set `NGROK_TOKEN` |
 | stuck on `waiting for .../healthz` | startup crash — read `code-server.log` |
