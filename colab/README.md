@@ -117,6 +117,10 @@ Things that bite:
 * **Public names are global.** `409 conflict` from `create name` means another
   zrok user owns it, not that you already reserved it. `code` is taken;
   `codesrv` was free.
+* **`ZROK_AUTOCLAIM=1`** handles that automatically: when the requested name is
+  taken it claims `<name>-<first 4 hex of sha256(token)>`, which is the same
+  on every runtime, so the fallback URL is stable too. The claimed name is
+  reported, and you can pin it by setting `ZROK_NAME` to it.
 * The domain is **`shares`**.zrok.io (plural), and v2.0.9 logs the endpoint with
   no scheme, so the script matches the bare host and prefixes `https://`.
 

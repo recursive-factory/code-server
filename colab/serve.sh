@@ -152,6 +152,47 @@ ok "code-server healthy (pid ${CS_PID})"
 
 # ------------------------------------------------------------- tunnels ----
 # zrok: the URL is the reserved name, so it survives new runtimes.
+# Claim ZROK_NAME, or with ZROK_AUTOCLAIM=1 a deterministic variant of it.
+# Prints the name in use; returns non-zero only when nothing could be claimed.
+zrok_claim_name() {
+  local want=$1 cand suffix
+  if zrok2 list names </dev/null 2>/dev/null | grep -qw "$want"; then
+    printf '%s' "$want"
+    return 0
+  fi
+  if zrok_name_create "$want"; then
+    printf '%s' "$want"
+    return 0
+  fi
+  if [[ "${ZROK_AUTOCLAIM:-0}" != "1" ]]; then
+    printf '%serr%s zrok name '%s' is taken by another zrok user — pick another ZROK_NAME, or set ZROK_AUTOCLAIM=1\n' \
+      "$CS_C_RED" "$CS_C_RESET" "$want" >&2
+    return 1
+  fi
+
+  suffix="$(printf '%s' "${ZROK_TOKEN:-}" | sha256sum | cut -c1-4)"
+  for cand in "${want}-${suffix}" "${want}-${suffix}-2" "${want}-${suffix}-3"; do
+    if zrok_name_create "$cand"; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  printf '%serr%s could not claim any variant of '%s'\n' "$CS_C_RED" "$CS_C_RESET" "$want" >&2
+  return 1
+}
+
+# Create one name. Success is "it exists now", not "we created it".
+zrok_name_create() {
+  local name=$1 out
+  out="$(timeout 45 zrok2 create name -n public "$name" </dev/null 2>&1 || true)"
+  printf '%s\n' "$out" >>"${SD}/zrok.log"
+  case "$out" in
+    *409*|*conflict*|*ERROR*|*"already"*) return 1 ;;
+    *) ok "zrok name '${name}' ready"; return 0 ;;
+  esac
+}
+
+
 start_zrok() {
   cs_need zrok2 "run: bash colab/install.sh"
   [[ -n "${ZROK_TOKEN:-}" ]] || die "zrok needs ZROK_TOKEN (account token from https://zrok.io)"
@@ -170,21 +211,20 @@ start_zrok() {
     *) ok "zrok environment enabled" ;;
   esac
 
-  if ! zrok2 list names </dev/null 2>/dev/null | grep -qw "${ZROK_NAME}"; then
-    out="$(timeout 45 zrok2 create name -n public "${ZROK_NAME}" </dev/null 2>&1 || true)"
-    printf '%s\n' "$out" >>"${SD}/zrok.log"
-    case "$out" in
-      *409*|*conflict*)
-        printf '%serr%s zrok name '%s' is taken by another zrok user — pick another ZROK_NAME\n' \
-          "$CS_C_RED" "$CS_C_RESET" "$ZROK_NAME" >&2
-        exit 2 ;;
-      *) ok "zrok name '${ZROK_NAME}' ready" ;;
-    esac
+  # Public names are global, so the one you want may belong to someone else.
+  # ZROK_AUTOCLAIM derives a deterministic suffix from the token, so the fallback
+  # name is the same on every runtime and the URL stays stable.
+  local zname="${ZROK_NAME}"
+  zname="$(zrok_claim_name "$zname")" || exit 2
+  if [[ "$zname" != "$ZROK_NAME" ]]; then
+    warn "zrok name '${ZROK_NAME}' was taken — claimed '${zname}' instead"
+    warn "  your URL is https://${zname}.shares.zrok.io (stable while the token is)"
+    warn "  set ZROK_NAME='${zname}' to make that explicit, or reserve another name"
   fi
 
-  log "opening zrok share for 127.0.0.1:${PORT} as ${ZROK_NAME}"
+  log "opening zrok share for 127.0.0.1:${PORT} as ${zname}"
   cs_rotate_log "${SD}/zrok.log"
-  nohup zrok2 share public "127.0.0.1:${PORT}" -n "public:${ZROK_NAME}" --headless \
+  nohup zrok2 share public "127.0.0.1:${PORT}" -n "public:${zname}" --headless \
     >"${SD}/zrok.log" 2>&1 9>&- &
   TUN_PID=$!
   cs_write_pid "${SD}/zrok.pid" "$TUN_PID"

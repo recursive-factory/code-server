@@ -100,7 +100,9 @@ while :; do
   elif ((srv_rc == 2)); then
     # Unrecoverable (e.g. the port is held by something that is not ours).
     # Restarting would just burn the retry budget and hide the real message.
-    die "cannot start on port ${PORT}; see the error above"
+    # PORT may be unset here (nothing was recorded yet), so naming one would be a
+    # guess. The failing component already explained itself above.
+    die "the stack cannot start — see the error above"
   else
     warn "serve.sh failed to start (exit ${srv_rc})"
   fi
