@@ -330,6 +330,65 @@ ts_daemon_up() {
   tailscale status --json </dev/null >/dev/null 2>&1
 }
 
+ts_node_id() {
+  tailscale status --json </dev/null 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print((d.get("Self") or {}).get("ID") or "")
+' 2>/dev/null || true
+}
+
+# Reclaim TS_NODE by deleting other devices of that name via the Tailscale API.
+# Funnel names are per node identity, and a Colab runtime wipes its identity, so
+# stale devices accumulate and each new one gets code-1, code-2, ... Opt-in:
+# deleting a device is destructive and needs a token with devices:write.
+ts_reclaim_name() {
+  [[ "${TS_RECLAIM:-0}" == "1" ]] || return 0
+  if [[ -z "${TS_API_KEY:-}" ]]; then
+    warn "TS_RECLAIM=1 needs TS_API_KEY (admin console -> Settings -> Keys -> API access token)"
+    return 0
+  fi
+
+  local api="https://api.tailscale.com/api/v2" self_id body ids id
+  self_id="$(ts_node_id)"
+  body="$(curl -fsS --max-time 20 -u "${TS_API_KEY}:" "${api}/tailnet/-/devices" 2>/dev/null || true)"
+  if [[ -z "$body" ]]; then
+    warn "reclaim: could not list devices (token scope? offline?)"
+    return 0
+  fi
+
+  ids="$(printf '%s' "$body" | python3 -c '
+import json, sys
+want, self_id = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for dev in data.get("devices", []):
+    name = (dev.get("hostname") or dev.get("name") or "").split(".")[0]
+    if name == want and dev.get("id") != self_id:
+        print(dev.get("id"))
+' "$TS_NODE" "$self_id" 2>/dev/null || true)"
+
+  if [[ -z "$ids" ]]; then
+    ok "reclaim: no stale device named '${TS_NODE}'"
+    return 0
+  fi
+
+  for id in $ids; do
+    log "reclaim: deleting stale device ${id} (hostname ${TS_NODE})"
+    if curl -fsS --max-time 20 -X DELETE -u "${TS_API_KEY}:" "${api}/device/${id}" >/dev/null 2>&1; then
+      ok "reclaim: deleted ${id}"
+    else
+      warn "reclaim: delete failed for ${id} (scope needs devices:write)"
+    fi
+  done
+  return 0
+}
+
 start_tailscale() {
   cs_need tailscale "run: WITH_TAILSCALE=1 bash colab/install.sh"
   [[ -n "${TS_AUTHKEY:-}" ]] \
@@ -372,8 +431,24 @@ start_tailscale() {
     fi
   fi
 
+  ts_reclaim_name
+
   local state
   state="$(ts_backend_state)"
+
+  # If we are already joined under a suffixed name and reclaim just removed the
+  # holder, a rename alone will not fix it: the control plane assigned the name at
+  # registration, so re-register to claim TS_NODE properly.
+  if [[ "${TS_RECLAIM:-0}" == "1" && "$state" == "Running" ]]; then
+    local current
+    current="$(tailscale_dnsname)"
+    if [[ -n "$current" && "${current%%.*}" != "$TS_NODE" ]]; then
+      log "reclaim: re-registering to claim '${TS_NODE}' (currently ${current%%.*})"
+      timeout 45 tailscale logout </dev/null >/dev/null 2>&1 || true
+      sleep 2
+      state="$(ts_backend_state)"
+    fi
+  fi
   if [[ "$state" != "Running" ]]; then
     log "joining tailnet as ${TS_NODE} (state: ${state:-unknown})"
     # Never let this hang: an unreachable control plane would otherwise sit here

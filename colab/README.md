@@ -167,6 +167,30 @@ Three ways to keep one hostname:
 | delete the stale machine at <https://login.tailscale.com/admin/machines> | reclaims the exact name immediately |
 | named cloudflared tunnel (`CF_TOKEN` + `CF_TUNNEL_URL`) | a genuinely permanent hostname, independent of node identity |
 
+### Automatic reclaim
+
+`TS_RECLAIM=1` with an API token deletes stale devices named `TS_HOSTNAME` before
+joining, then re-registers so the name is actually claimed:
+
+```bash
+TS_API_KEY=tskey-api-... TS_RECLAIM=1 TS_HOSTNAME=code bash colab/serve.sh --tunnel=tailscale
+```
+
+Create the token at <https://login.tailscale.com/admin/settings/keys> → **API
+access token**. It needs `devices:write` (the default for a full token); it is
+separate from the node auth key. Configure it in the notebook as `TS_API_KEY`,
+preferably via a Colab Secret.
+
+| behaviour | detail |
+|---|---|
+| never deletes itself | the current node's ID is excluded from the match |
+| only exact hostname matches | `code` matches `code` and `code.tailnet.ts.net`, never `code-1` or another machine |
+| re-registers when needed | if the node is already joined as `code-1`, a rename alone will not help, so it logs out and rejoins to claim `code` |
+| off by default | without `TS_RECLAIM=1` nothing is deleted |
+
+Deleting a device is destructive and immediate. Prefer `TS_EPHEMERAL=1` if you
+only want names to stop accumulating.
+
 `serve.sh` keeps node state in `$CS_STATE_DIR/tailscale-state` so a restart
 *within* one VM reuses the same identity instead of registering again, and warns
 when Tailscale hands back a suffixed name.
