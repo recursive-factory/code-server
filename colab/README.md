@@ -150,7 +150,36 @@ One-time setup, in the Tailscale admin console:
 
 ### Setting it
 
-Prefer a **Colab Secret** (🔑 in the left sidebar → add secret named
+Three places, in precedence order. First non-empty wins:
+
+1. the notebook config cell (`TS_AUTHKEY = "tskey-auth-..."`)
+2. a real environment variable — `%env TS_AUTHKEY=tskey-auth-...`, or
+   `export TS_AUTHKEY=...` before `bash colab/serve.sh`
+3. a **Colab Secret** named `TS_AUTHKEY`
+
+Note that (3) is *not* an environment variable. Colab Secrets are only reachable
+through `userdata.get('TS_AUTHKEY')`; they are never exported into `os.environ`,
+so a script that reads `$TS_AUTHKEY` will not see one. That is why the config
+cell resolves secrets explicitly and then exports the result:
+
+```python
+tskey = _resolve(TS_AUTHKEY, "TS_AUTHKEY")   # cell -> env -> userdata.get
+if tskey:
+    os.environ["TS_AUTHKEY"] = tskey
+```
+
+The write-back is conditional on purpose: assigning unconditionally would
+overwrite a key that came from a real environment variable with an empty string.
+
+Failure modes the helper reports instead of silently returning empty:
+
+| what you see | meaning |
+|---|---|
+| `[secret] 'TS_AUTHKEY' exists but notebook access is off` | the secret is there, the toggle isn't — Secrets panel → grant access |
+| `tailscale key: none`, no message | the secret does not exist under that exact name |
+| `tailscale key: tskey-auth-k1…(63 chars)` | resolved; run the next cell |
+
+Prefer the environment variable or a **Colab Secret** (🔑 in the left sidebar → add secret named
 `TS_AUTHKEY` → enable notebook access). The config cell reads it automatically
 and never prints it in full:
 
