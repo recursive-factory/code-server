@@ -145,6 +145,20 @@ Every value is optional. `TUNNEL` stays `auto` unless you force one:
 * `ngrok` — needs `NGROK_TOKEN` (or a Colab Secret of that name); fastest
 * `cloudflared` — no account, slightly slower to register, URL changes per run
 * `none` — loopback only, for debugging
+
+And the rest of the knobs, all with working defaults:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CS_PORT` | auto | first free of `8080`/`8090`/`8443`/`9000`/`13337`. Pin one, e.g. `"9090"`. 8080 is not safe on Colab, where `datalab/web/app.js` sometimes owns it |
+| `NGROK_DOMAIN` | — | reserved ngrok domain, so the URL survives restarts |
+| `NGROK_AUTH` | — | `user:pass` gate at ngrok's edge, rejects scanners |
+| `IDLE_TIMEOUT` | `1800` | shut down after this many seconds with no connections |
+| `MAX_RUNTIME` | `39600` | hard stop at 11 h |
+| `STATE_ON_DRIVE` | `False` | keep extensions and settings between runtimes |
+
+The resolved port is recorded in `$CS_STATE_DIR/port`, so `stop.sh`, the idle
+watchdog and `doctor.sh` always operate on the port actually in use.
 """),
     code("""
 import os
