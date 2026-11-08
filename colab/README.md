@@ -12,7 +12,6 @@ colab/
 ├── serve.sh         # start code-server, wait for health, open tunnel, report
 ├── supervise.sh     # restart with backoff + idle / max-runtime watchdog
 ├── stop.sh          # stop everything
-├── doctor.sh        # read-only diagnostics
 ├── lib/common.sh    # shared helpers (logging, locks, pidfiles, probes)
 └── code-server-min.ipynb    # 14 cells, ~110 lines: fetches the scripts
 ```
@@ -174,7 +173,6 @@ bash colab/supervise.sh
 ## Diagnostics
 
 ```bash
-bash colab/doctor.sh
 ```
 
 Reports architecture, OS, memory, `/content` free space, code-server version,
@@ -199,7 +197,6 @@ tunnel credentials, live processes, port state, established connections,
 |---|---|
 | blank page, no editor | quick-tunnel interstitial not clicked through |
 | URL died within seconds of appearing | `Runtime → Run all` also runs the Stop cell. It is now opt-in (`STOP = True`), but any older copy will still tear the stack down right after printing the URL |
-| Cloudflare **error 1033** | the tunnel hostname resolves but no connector is attached — cloudflared died, or you are using a hostname from a previous run. Quick tunnels get a new hostname per start, so always take the URL from `credentials.txt`; `doctor.sh` now probes it and names 1033 |
 | stale 404 URL | previous runtime's URL; re-run `serve.sh` |
 | editor loads, terminal dies | WebSocket not carried by the path in use |
 | `port 8080 is busy` | an orphan from an earlier run; `serve.sh` reclaims it automatically when it looks like ours. If it cannot, the pid and argv are printed — free it or use `--port=<n>` |

@@ -188,7 +188,6 @@ main() {
 
   next     bash colab/serve.sh
   or       bash colab/supervise.sh      (restarts + idle/max-runtime watchdog)
-  check    bash colab/doctor.sh
 
 EOF
 }
