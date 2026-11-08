@@ -165,8 +165,11 @@ zrok_claim_name() {
     return 0
   fi
   if [[ "${ZROK_AUTOCLAIM:-0}" != "1" ]]; then
-    printf '%serr%s zrok name '%s' is taken by another zrok user — pick another ZROK_NAME, or set ZROK_AUTOCLAIM=1\n' \
+    printf '%serr%s zrok name '%s' is not available in the shared public namespace.\n' \
       "$CS_C_RED" "$CS_C_RESET" "$want" >&2
+    # 409 is the same for "yours" and "someone else's"; the listing is the tell.
+    printf '  if it is yours, it appears in: zrok2 list names\n' >&2
+    printf '  otherwise pick another ZROK_NAME, or set ZROK_AUTOCLAIM=1 to claim %s-<hash>\n' "$want" >&2
     return 1
   fi
 
@@ -217,7 +220,7 @@ start_zrok() {
   local zname="${ZROK_NAME}"
   zname="$(zrok_claim_name "$zname")" || exit 2
   if [[ "$zname" != "$ZROK_NAME" ]]; then
-    warn "zrok name '${ZROK_NAME}' was taken — claimed '${zname}' instead"
+    warn "zrok name '${ZROK_NAME}' was unavailable — claimed '${zname}' instead"
     warn "  your URL is https://${zname}.shares.zrok.io (stable while the token is)"
     warn "  set ZROK_NAME='${zname}' to make that explicit, or reserve another name"
   fi

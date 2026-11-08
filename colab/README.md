@@ -114,9 +114,12 @@ Things that bite:
 * **`--headless` is mandatory** — without it `zrok2 enable` dies with
   `open /dev/tty: no such device`. "already have an enabled environment" counts
   as success.
-* **Public names are global.** `409 conflict` from `create name` means another
-  zrok user owns it, not that you already reserved it. `code` is taken;
-  `codesrv` was free.
+* **The public namespace is shared, and 409 is ambiguous.** `create name`
+  returns the identical `createShareNameConflict ""` whether the name is
+  yours already or another account's — verified against `oc-llm-proxy`
+  (yours) and `code` (not). The tell is `zrok2 list names`: names from your
+  earlier sessions are still under your account and appear there. `code`
+  does not, so someone else holds it; `codesrv` was free.
 * **`ZROK_AUTOCLAIM=1`** handles that automatically: when the requested name is
   taken it claims `<name>-<first 4 hex of sha256(token)>`, which is the same
   on every runtime, so the fallback URL is stable too. The claimed name is
