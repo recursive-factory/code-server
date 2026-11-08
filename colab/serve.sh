@@ -515,15 +515,19 @@ start_tailscale() {
 }
 
 zrok_url() {
-  # The reserved name is the URL host: https://<name>.share.zrok.io
+  # The reserved name is the URL host: https://<name>.shares.zrok.io
   if [[ -n "${ZROK_URL:-}" ]]; then
     printf '%s' "$ZROK_URL"
     return 0
   fi
   local url
-  url="$(grep -oE 'https://[a-z0-9.-]+\.zrok\.io' "${SD}/zrok.log" 2>/dev/null | head -1 || true)"
-  if [[ -z "$url" && -n "${ZROK_NAME:-}" ]]; then
-    url="https://${ZROK_NAME}.share.zrok.io"
+  # zrok2 v2.0.9 logs "access your zrok share at: <name>.shares.zrok.io" with no
+  # scheme, so take the bare host and add https://.
+  url="$(grep -oE '[a-z0-9.-]+\.shares\.zrok\.io' "${SD}/zrok.log" 2>/dev/null | head -1 || true)"
+  if [[ -n "$url" ]]; then
+    url="https://${url}"
+  elif [[ -n "${ZROK_NAME:-}" ]]; then
+    url="https://${ZROK_NAME}.shares.zrok.io"
   fi
   printf '%s' "$url"
 }
@@ -537,22 +541,35 @@ start_zrok() {
 
   # Enable this environment once per runtime. The URL does not depend on it, so a
   # fresh environment each session is harmless (unlike per-node DNS names).
-  export ZROK_DISABLE_TUI=true
-  if ! zrok2 status >/dev/null 2>&1; then
-    log "enabling zrok environment"
-    if ! timeout 90 zrok2 enable "$ZROK_TOKEN" </dev/null >"${SD}/zrok.log" 2>&1; then
+  # --headless is required: without a TTY, enable aborts with "open /dev/tty".
+  # "already have an enabled environment" is success, not an error.
+  log "enabling zrok environment"
+  local enable_out
+  enable_out="$(timeout 90 zrok2 enable "$ZROK_TOKEN" --headless </dev/null 2>&1 || true)"
+  printf '%s\n' "$enable_out" >>"${SD}/zrok.log"
+  case "$enable_out" in
+    *"already have an enabled environment"*) ok "zrok environment already enabled" ;;
+    *ERROR*|*error*)
       cs_dump_log "${SD}/zrok.log" 20
-      # Retrying a rejected token cannot help.
       printf '%serr%s zrok enable failed — check ZROK_TOKEN\n' "$CS_C_RED" "$CS_C_RESET" >&2
-      exit 2
-    fi
-  fi
+      exit 2 ;;
+    *) ok "zrok environment enabled" ;;
+  esac
 
   # Reserve the name if it does not exist yet; an existing one is fine.
   if ! timeout 45 zrok2 list names </dev/null 2>/dev/null | grep -qw "${ZROK_NAME}"; then
     log "reserving zrok name '${ZROK_NAME}'"
-    timeout 45 zrok2 create name -n public "${ZROK_NAME}" </dev/null \
-      >>"${SD}/zrok.log" 2>&1 || warn "create name failed (already reserved is fine)"
+    local create_out
+    create_out="$(timeout 45 zrok2 create name -n public "${ZROK_NAME}" </dev/null 2>&1 || true)"
+    printf '%s\n' "$create_out" >>"${SD}/zrok.log"
+    case "$create_out" in
+      *409*|*conflict*)
+        # Names in the public namespace are global: someone else already has it.
+        printf '%serr%s zrok name '%s' is taken by another zrok user — pick a different ZROK_NAME\n' \
+          "$CS_C_RED" "$CS_C_RESET" "$ZROK_NAME" >&2
+        exit 2 ;;
+      *) ok "zrok name '${ZROK_NAME}' ready" ;;
+    esac
   fi
 
   log "opening zrok public share for 127.0.0.1:${PORT} as ${ZROK_NAME}"

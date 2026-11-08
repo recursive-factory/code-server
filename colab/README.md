@@ -280,7 +280,7 @@ zrok's URL comes from a **reserved name**, not from machine identity — so it
 survives new runtimes in a way Tailscale Funnel cannot:
 
 ```
-https://<ZROK_NAME>.share.zrok.io
+https://<ZROK_NAME>.shares.zrok.io
 ```
 
 ```bash
@@ -292,10 +292,22 @@ In the notebook: `ZROK_TOKEN` and `ZROK_NAME`, preferably as Colab Secrets. Set
 `TUNNEL = "zrok"`, or leave `auto` — with both values present and `zrok2`
 installed, `auto` now prefers zrok over Tailscale.
 
-What it does per run: `zrok2 enable` the environment (a fresh environment each
-session is harmless because the URL is the name), reserve the name with
-`zrok2 create name -n public <name>` if it does not exist, then
-`zrok2 share public 127.0.0.1:<port> -n public:<name> --headless`.
+What it does per run:
+
+```bash
+zrok2 enable "$ZROK_TOKEN" --headless          # --headless is required, no TTY
+zrok2 create name -n public "$ZROK_NAME"       # skipped when it already exists
+zrok2 share public 127.0.0.1:<port> -n "public:$ZROK_NAME" --headless
+```
+
+Two things that bite:
+
+* **`--headless` is mandatory** — without it `zrok2 enable` dies with
+  `open /dev/tty: no such device`. "already have an enabled environment" is
+  treated as success.
+* **Public names are global.** `create name` returning `409 conflict` means
+  another zrok user owns that name — pick a different `ZROK_NAME`. `code`,
+  for instance, is taken.
 
 ### Not an option: Colab's own port proxy
 
