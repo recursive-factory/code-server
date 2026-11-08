@@ -19,7 +19,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/common.sh
 source "${HERE}/lib/common.sh"
 
-PORT="${CS_PORT:-8080}"
+PORT="${CS_PORT:-}"
 IDLE_TIMEOUT="${CS_IDLE_TIMEOUT:-1800}"     # 30 min with zero connections
 MAX_RUNTIME="${CS_MAX_RUNTIME:-39600}"      # 11 h, under Colab's hard cap
 HEALTHY_AFTER="${CS_HEALTHY_AFTER:-600}"    # uptime that resets the backoff
@@ -33,6 +33,7 @@ cs_need code-server "run: bash colab/install.sh"
 cs_need curl
 
 SD="$(cs_state_dir)"
+PORT="${PORT:-$(cs_resolved_port "$SD")}"
 cs_lock supervise
 trap 'cs_unlock' EXIT
 
@@ -76,6 +77,7 @@ while :; do
   bash "${HERE}/serve.sh" "$@" 9>&- || srv_rc=$?
 
   if ((srv_rc == 0)); then
+    PORT="$(cs_resolved_port "$SD")"
     rc=0
     watch_stack || rc=$?
     case "$rc" in

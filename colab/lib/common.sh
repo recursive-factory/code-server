@@ -280,6 +280,34 @@ cs_free_port() {
   return 1
 }
 
+# 8080 is not a safe default on Colab: in some runtimes Colab's own frontend
+# (datalab/web/app.js) already owns it. An explicit CS_PORT wins; otherwise
+# serve.sh picks the first free candidate and records it, and the other scripts
+# read that record so they always agree on the port.
+cs_pick_port() {
+  local p
+  for p in 8080 8090 8443 9000 13337; do
+    if ! cs_port_in_use "$p"; then
+      printf '%s' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cs_resolved_port() {
+  local sd=$1
+  if [[ -n "${CS_PORT:-}" ]]; then
+    printf '%s' "$CS_PORT"
+    return 0
+  fi
+  if [[ -s "${sd}/port" ]]; then
+    head -1 -- "${sd}/port"
+    return 0
+  fi
+  printf '8080'
+}
+
 # -------------------------------------------------------------- password ----
 # Persisted in the state dir so a restart does not invalidate an open tab.
 # CS_PASSWORD overrides without touching disk.

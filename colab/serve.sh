@@ -17,7 +17,7 @@ source "${HERE}/lib/common.sh"
 
 FOREGROUND=0
 TUNNEL="${CS_TUNNEL:-auto}"
-PORT="${CS_PORT:-8080}"
+PORT="${CS_PORT:-}"
 AUTH="password"
 
 usage() {
@@ -26,7 +26,7 @@ usage: serve.sh [options]
 
   --foreground     remain in the foreground until a child exits
   --tunnel=NAME    auto | ngrok | cloudflared | none (default: $CS_TUNNEL, auto)
-  --port=N         local port                        (default: $CS_PORT, 8080)
+  --port=N         local port  (default: first free of 8080/8090/8443/9000/13337)
   --no-auth        disable authentication (requires CS_ALLOW_INSECURE=1)
   -h, --help
 EOF
@@ -44,7 +44,9 @@ while (($#)); do
   shift
 done
 
-[[ "$PORT" =~ ^[0-9]+$ ]] || die "invalid port: ${PORT}"
+if [[ -n "$PORT" ]]; then
+  [[ "$PORT" =~ ^[0-9]+$ ]] || die "invalid port: ${PORT}"
+fi
 case "$TUNNEL" in
   auto|ngrok|cloudflared|none) ;;
   *) die "--tunnel must be auto, ngrok, cloudflared or none (got: ${TUNNEL})" ;;
@@ -78,6 +80,14 @@ cs_need python3
 
 SD="$(cs_state_dir)"
 cs_lock serve
+
+# Resolve the port now that the state dir exists, and record it so stop.sh,
+# supervise.sh and doctor.sh operate on the same one.
+if [[ -z "$PORT" ]]; then
+  PORT="$(cs_pick_port)" || die "no free port among 8080/8090/8443/9000/13337; pass --port=<n>"
+  log "auto-selected port ${PORT}"
+fi
+printf '%s\n' "$PORT" >"${SD}/port"
 
 CS_PID=''
 TUN_PID=''

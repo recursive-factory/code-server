@@ -10,7 +10,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${HERE}/lib/common.sh"
 
 SD="$(cs_state_dir)"
-PORT="${CS_PORT:-8080}"
+PORT="$(cs_resolved_port "$SD")"
 
 # The supervisor must go first: it restarts serve.sh, so killing the children
 # while it still runs just gets them relaunched a few seconds later.

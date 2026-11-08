@@ -153,6 +153,7 @@ import os
 NGROK_TOKEN    = ""        # or add a Colab Secret named NGROK_TOKEN
 TUNNEL         = ""        # "" = auto | "ngrok" | "cloudflared" | "none"
 NGROK_DOMAIN   = ""        # reserved domain => stable URL, e.g. "me.ngrok-free.app"
+CS_PORT        = ""        # "" = auto (first free port), or pin one, e.g. 9090
 NGROK_AUTH     = ""        # optional edge gate "user:pass" (rejects scanners)
 IDLE_TIMEOUT   = 1800      # seconds with zero connections before shutdown
 MAX_RUNTIME    = 39600     # seconds before forced shutdown (11 h)
@@ -172,6 +173,7 @@ if not token:
 
 os.environ["NGROK_TOKEN"] = token
 os.environ["CS_TUNNEL"] = TUNNEL
+os.environ["CS_PORT"] = str(CS_PORT)
 os.environ["CS_IDLE_TIMEOUT"] = str(IDLE_TIMEOUT)
 os.environ["CS_MAX_RUNTIME"] = str(MAX_RUNTIME)
 if NGROK_DOMAIN: os.environ["NGROK_DOMAIN"] = NGROK_DOMAIN
@@ -185,6 +187,7 @@ if STATE_ON_DRIVE:
     os.environ["CS_CACHE_DIR"] = "/content/drive/MyDrive/.code-server/cache"
 
 print("tunnel      :", TUNNEL or "auto")
+print("port        :", CS_PORT or "auto")
 print("ngrok token :", f"yes ({token_source})" if token else "no -> cloudflared fallback")
 print("state dir   :", os.environ.get("CS_STATE_DIR", "/content/.code-server"))
 """),

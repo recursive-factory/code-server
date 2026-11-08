@@ -12,7 +12,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "${HERE}/lib/common.sh"
 
 SD="$(cs_state_dir)"
-PORT="${CS_PORT:-8080}"
+PORT="$(cs_resolved_port "$SD")"
 problems=0
 
 bad() { warn "$*"; problems=$((problems + 1)); }
