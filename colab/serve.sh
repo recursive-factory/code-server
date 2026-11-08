@@ -25,7 +25,7 @@ usage() {
 usage: serve.sh [options]
 
   --foreground     remain in the foreground until a child exits
-  --tunnel=NAME    auto | ngrok | cloudflared | none (default: $CS_TUNNEL, auto)
+  --tunnel=NAME    auto | ngrok | cloudflared | tailscale | none (default: auto)
   --port=N         local port  (default: first free in $CS_PORT_RANGE, 3000-5000)
   --no-auth        disable authentication (requires CS_ALLOW_INSECURE=1)
   -h, --help
@@ -48,8 +48,8 @@ if [[ -n "$PORT" ]]; then
   [[ "$PORT" =~ ^[0-9]+$ ]] || die "invalid port: ${PORT}"
 fi
 case "$TUNNEL" in
-  auto|ngrok|cloudflared|none) ;;
-  *) die "--tunnel must be auto, ngrok, cloudflared or none (got: ${TUNNEL})" ;;
+  auto|ngrok|cloudflared|tailscale|none) ;;
+  *) die "--tunnel must be auto, ngrok, cloudflared, tailscale or none (got: ${TUNNEL})" ;;
 esac
 
 # auto: ngrok if it has credentials, otherwise cloudflared quick tunnel, which
@@ -59,6 +59,8 @@ if [[ "$TUNNEL" == "auto" ]]; then
     TUNNEL=ngrok
   elif command -v ngrok >/dev/null 2>&1 && ngrok config check >/dev/null 2>&1; then
     TUNNEL=ngrok
+  elif [[ -n "${TS_AUTHKEY:-}" ]] && command -v tailscale >/dev/null 2>&1; then
+    TUNNEL=tailscale
   elif command -v cloudflared >/dev/null 2>&1; then
     TUNNEL=cloudflared
   else
@@ -284,7 +286,74 @@ start_cloudflared() {
   return 1
 }
 
+tailscale_url() {
+  if [[ -n "${TS_TUNNEL_URL:-}" ]]; then
+    printf '%s' "$TS_TUNNEL_URL"
+    return 0
+  fi
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+name = ((d.get("Self") or {}).get("DNSName") or "").rstrip(".")
+if name:
+    print("https://" + name)
+' 2>/dev/null || true
+}
+
+start_tailscale() {
+  cs_need tailscale "run: WITH_TAILSCALE=1 bash colab/install.sh"
+  [[ -n "${TS_AUTHKEY:-}" ]] \
+    || die "tailscale needs TS_AUTHKEY (admin console -> Settings -> Keys; make it reusable)"
+
+  # Colab has no /dev/net/tun, so tailscaled must run in userspace mode. Serve
+  # and Funnel still work there because tailscaled does the dialing itself.
+  if ! tailscale status >/dev/null 2>&1; then
+    log "starting tailscaled (userspace networking)"
+    cs_rotate_log "${SD}/tailscaled.log"
+    nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 \
+      >"${SD}/tailscaled.log" 2>&1 9>&- &
+    TUN_PID=$!
+    cs_write_pid "${SD}/tailscale.pid" "$TUN_PID"
+    local i
+    for ((i = 0; i < 20; i++)); do
+      tailscale status >/dev/null 2>&1 && break
+      sleep 1
+    done
+  fi
+
+  if ! tailscale status >/dev/null 2>&1; then
+    cs_dump_log "${SD}/tailscaled.log" 30
+    return 1
+  fi
+
+  log "joining tailnet as ${TS_HOSTNAME:-colab-code-server}"
+  tailscale up \
+    --authkey="$TS_AUTHKEY" \
+    --hostname="${TS_HOSTNAME:-colab-code-server}" \
+    --accept-routes=false >/dev/null 2>&1 \
+    || { warn "tailscale up failed"; tailscale status 2>&1 | head -5 >&2; return 1; }
+
+  log "enabling Funnel for 127.0.0.1:${PORT}"
+  if ! tailscale funnel --bg "$PORT" >"${SD}/tailscale-funnel.log" 2>&1; then
+    cat "${SD}/tailscale-funnel.log" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  local i
+  for ((i = 0; i < 45; i++)); do
+    PUBLIC_URL="$(tailscale_url)"
+    [[ -n "$PUBLIC_URL" ]] && return 0
+    sleep 1
+  done
+  warn "could not read the ts.net hostname from tailscale status"
+  return 1
+}
+
 case "$TUNNEL" in
+  tailscale)   start_tailscale   || die "tunnel startup failed" ;;
   ngrok)       start_ngrok       || die "tunnel startup failed" ;;
   cloudflared) start_cloudflared || die "tunnel startup failed" ;;
   none)        PUBLIC_URL="http://127.0.0.1:${PORT}" ;;
@@ -311,6 +380,12 @@ dim "  state   ${SD}"
 dim "  logs    ${SD}/code-server.log  ${SD}/${TUNNEL}.log"
 dim "  stop    bash colab/stop.sh"
 printf '\n'
+
+if [[ "$TUNNEL" == "tailscale" ]]; then
+  dim "  ts.net hostname is fixed: it survives restarts as long as"
+  dim "  TS_HOSTNAME and a reusable TS_AUTHKEY stay the same."
+  printf '\n'
+fi
 
 if [[ "$TUNNEL" == "ngrok" && -z "${NGROK_DOMAIN:-}" ]]; then
   warn "ngrok free tier shows a warning page on the first browser hit."

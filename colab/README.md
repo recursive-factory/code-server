@@ -122,6 +122,39 @@ CF_TOKEN=<tunnel-token> CF_TUNNEL_URL=https://code.example.com \
 This is the durable option. Nothing is being hidden: the traffic is a normal
 TLS connection to a domain you control.
 
+### Tailscale Funnel (fixed URL off a free account)
+
+Funnel gives you a **stable** `https://<machine>.<tailnet>.ts.net` hostname
+instead of a new one per start. It is available on **all plans, including free**
+(currently beta), and only the edge ports `443`, `8443` and `10000` are public —
+the local port stays whatever `serve.sh` picked.
+
+Prerequisites, all in the Tailscale admin console:
+
+1. **DNS** → enable *MagicDNS* and *HTTPS Certificates*
+2. **Settings → Keys** → create a key and make it **reusable** (a single-use key
+   works once, and a fresh runtime would then fail)
+
+```bash
+WITH_TAILSCALE=1 bash colab/install.sh
+TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=colab-dev bash colab/serve.sh --tunnel=tailscale
+```
+
+Or in the notebook: `TUNNEL = "tailscale"`, `TS_AUTHKEY = "tskey-auth-..."`,
+`TS_HOSTNAME = "colab-dev"`. The URL is reported per run and is the same every
+time, so `https://colab-dev.<tailnet>.ts.net` becomes a bookmark.
+
+How it works on Colab: there is no `/dev/net/tun`, so `tailscaled` runs with
+`--tun=userspace-networking`, and Funnel/Serve still function because tailscaled
+dials `127.0.0.1:<port>` itself. `stop.sh` runs `tailscale funnel reset`,
+otherwise the hostname keeps advertising a dead port.
+
+Costs of the fixed URL, so nobody is surprised: traffic is relayed through
+Tailscale rather than direct, so latency is higher than ngrok/cloudflared; the
+hostname is stable but only *serves* while a runtime is up (a dead runtime gets a
+connection error, not a 404); and Funnel is still a public endpoint, so it is the
+same exposure as any other tunnel.
+
 ### Not an option: Colab's own port proxy
 
 `google.colab.output.serve_kernel_port_as_window()` can expose a port, but the
@@ -149,7 +182,11 @@ bash colab/supervise.sh
 | `NGROK_BASIC_AUTH` | — | `user:pass`, rejects scanners at ngrok's edge |
 | `CF_TOKEN` | — | Cloudflare named-tunnel token |
 | `CF_TUNNEL_URL` | — | public hostname to report for a named tunnel |
-| `CS_TUNNEL` | `auto` | `auto` \| `ngrok` \| `cloudflared` \| `none`. `auto` = ngrok when it has credentials, else a cloudflared quick tunnel (no account needed) |
+| `TS_AUTHKEY` | — | Tailscale auth key; set it and `auto` prefers Funnel. Make it **reusable** |
+| `TS_HOSTNAME` | `colab-code-server` | node name, and therefore the `*.ts.net` hostname — keep it fixed |
+| `TS_TUNNEL_URL` | — | override the reported URL instead of reading it from `tailscale status` |
+| `WITH_TAILSCALE` | `0` | `install.sh` also installs `tailscale` + `tailscaled` |
+| `CS_TUNNEL` | `auto` | `auto` \| `ngrok` \| `cloudflared` \| `tailscale` \| `none`. `auto` = ngrok when it has credentials, else a cloudflared quick tunnel (no account needed) |
 | `CS_PORT` | auto | pin a port, or leave empty to scan `CS_PORT_RANGE` and take the first free one. The tunnel always maps to the chosen port |
 | `CS_PORT_RANGE` | `3000-5000` | scan range when `CS_PORT` is empty. Avoids 8080, which `datalab/web/app.js` owns on some Colab runtimes. The choice is recorded in `$CS_STATE_DIR/port` |
 | `CS_PASSWORD` | generated | fixed password; otherwise persisted to the state dir |

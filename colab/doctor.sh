@@ -64,6 +64,22 @@ else
   kv "cloudflared" "not installed"
 fi
 
+if command -v tailscale >/dev/null 2>&1; then
+  if tailscale status >/dev/null 2>&1; then
+    kv "tailscale" "$(tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+self_ = d.get("Self") or {}
+print(self_.get("HostName", "?"), "|", (self_.get("DNSName") or "?").rstrip("."))
+' 2>/dev/null || echo connected)"
+    funnel="$(tailscale funnel status 2>/dev/null | grep -m1 'https://' | tr -d ' ' || true)"
+    if [[ -n "$funnel" ]]; then kv "funnel" "$funnel"; else kv "funnel" "not configured"; fi
+  else
+    kv "tailscale" "installed, daemon not running"
+  fi
+fi
+
 section "runtime state"
 if cs_alive "${SD}/cs.pid"; then
   kv "code-server" "running (pid $(cs_read_pid "${SD}/cs.pid"))"

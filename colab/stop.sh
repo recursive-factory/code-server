@@ -34,6 +34,13 @@ cs_stop_pidfile "${SD}/cs.pid" code-server
 cs_stop_pidfile "${SD}/ngrok.pid" ngrok
 cs_stop_pidfile "${SD}/cloudflared.pid" cloudflared
 
+# Funnel stays configured on the node after the process dies, so reset it or the
+# ts.net hostname keeps advertising a dead port.
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+  tailscale funnel reset >/dev/null 2>&1 || true
+fi
+cs_stop_pidfile "${SD}/tailscale.pid" tailscaled
+
 # Fallback for a run whose pidfile was lost. The patterns are anchored to the
 # full argv on purpose: this repository's directory is itself named
 # "code-server", so a bare `pkill -f code-server` would also match — and kill —

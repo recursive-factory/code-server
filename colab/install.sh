@@ -18,6 +18,7 @@ source "${HERE}/lib/common.sh"
 CS_PREFIX="${CS_PREFIX:-/usr/local}"
 CS_VERSION="${CS_VERSION:-}"
 WITH_CLOUDFLARED="${WITH_CLOUDFLARED:-0}"
+WITH_TAILSCALE="${WITH_TAILSCALE:-0}"
 SKIP_APT="${SKIP_APT:-0}"
 
 # ----------------------------------------------------- resolve the version --
@@ -163,6 +164,18 @@ install_cloudflared() {
   ok "cloudflared $(cloudflared --version 2>/dev/null | awk 'NR==1 { print $3 }')"
 }
 
+# --------------------------------------------------------------- tailscale --
+install_tailscale() {
+  if command -v tailscale >/dev/null 2>&1 && command -v tailscaled >/dev/null 2>&1; then
+    ok "$(tailscale version 2>/dev/null | head -1)"
+    return 0
+  fi
+  log "installing tailscale"
+  curl -fsSL https://tailscale.com/install.sh | sh || die "tailscale install failed"
+  hash -r
+  ok "$(tailscale version 2>/dev/null | head -1)"
+}
+
 # ------------------------------------------------------------------- main --
 main() {
   local sd
@@ -185,6 +198,9 @@ main() {
   configure_ngrok
   if [[ "$WITH_CLOUDFLARED" == "1" ]]; then
     install_cloudflared
+  fi
+  if [[ "$WITH_TAILSCALE" == "1" ]]; then
+    install_tailscale
   fi
 
   printf '%s\n' "$version" >"${sd}/.installed-version"
