@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Regenerate colab/code-server.ipynb from the scripts in this directory.
 
-The notebook embeds every file base64-encoded, so it can be uploaded to Colab
-and run with no clone, no Drive and no credentials. Because the copies are
-generated, edit the real scripts and re-run this — never hand-edit the notebook.
+The notebook embeds every file as plain text, so it can be uploaded to Colab and
+run with no clone, no Drive and no credentials — and the embedded copies stay
+readable in the notebook itself. Because they are generated, edit the real
+scripts and re-run this; never hand-edit the notebook.
 
     python3 colab/build-notebook.py
 """
 
-import base64
 import json
 import pathlib
 
@@ -41,27 +41,36 @@ def code(text):
 
 
 def files_cell():
-    entries = []
-    for rel in KIT:
-        blob = base64.b64encode((HERE / rel).read_bytes()).decode()
-        entries.append(f"    {rel!r}: (\n        {blob!r}\n    ),")
+    """One Python cell holding every script verbatim, as raw triple-quoted text.
+
+    Raw strings keep the bash backslashes literal, which is why `r'''` is used:
+    the scripts contain things like tr '\0' ' ' and line continuations.
+    """
     lines = [
-        "import base64, pathlib, stat",
+        "import pathlib, stat",
         "",
+        "# These are the real scripts, verbatim — the same files live in the repo at",
+        "# colab/. Written to disk so they can be read, edited and re-run.",
         "FILES = {",
-        *entries,
+    ]
+    for rel in KIT:
+        text = (HERE / rel).read_text()
+        if "'''" in text or text.rstrip("\n").endswith("\\"):
+            raise SystemExit(f"{rel} cannot be embedded in a raw triple-quoted string")
+        lines.append(f"    {rel!r}: r'''{text}''',")
+    lines += [
         "}",
         "",
         '(BASE / "lib").mkdir(parents=True, exist_ok=True)',
-        "for rel, blob in FILES.items():",
+        "for rel, text in FILES.items():",
         "    f = BASE / rel",
-        "    f.write_bytes(base64.b64decode(blob))",
+        "    f.write_text(text)",
         '    if f.suffix == ".sh":',
         "        f.chmod(f.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)",
         "",
         'print(f"wrote {len(FILES)} files to {BASE}")',
         "for rel in sorted(FILES):",
-        '    print("  ", rel, (BASE / rel).stat().st_size, "bytes")',
+        '    print(f"   {rel:16s} {(BASE / rel).stat().st_size:6d} bytes")',
     ]
     return code("\n".join(lines))
 
@@ -179,7 +188,24 @@ print("tunnel      :", TUNNEL or "auto")
 print("ngrok token :", f"yes ({token_source})" if token else "no -> cloudflared fallback")
 print("state dir   :", os.environ.get("CS_STATE_DIR", "/content/.code-server"))
 """),
-    md("## 3. Write the toolkit"),
+    md("""
+## 3. Write the toolkit
+
+The scripts are embedded in the next cell **as plain text**, so you can read and
+review exactly what will run — no encoded blobs. The cell just writes them to
+`/content/colab-cs` and sets the executable bit; it downloads nothing and
+executes nothing.
+
+Prefer the repo? Skip this cell and point `BASE` at a clone:
+
+```bash
+git clone --depth 1 https://github.com/recursive-factory/code-server.git /content/cs
+```
+
+```python
+BASE = pathlib.Path("/content/cs/colab")
+```
+"""),
     files_cell(),
     md("""
 ## 4. Install
