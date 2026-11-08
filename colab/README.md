@@ -129,11 +129,54 @@ instead of a new one per start. It is available on **all plans, including free**
 (currently beta), and only the edge ports `443`, `8443` and `10000` are public —
 the local port stays whatever `serve.sh` picked.
 
-Prerequisites, all in the Tailscale admin console:
+### Getting an auth key
 
-1. **DNS** → enable *MagicDNS* and *HTTPS Certificates*
-2. **Settings → Keys** → create a key and make it **reusable** (a single-use key
-   works once, and a fresh runtime would then fail)
+One-time setup, in the Tailscale admin console:
+
+1. **DNS** — <https://login.tailscale.com/admin/dns> → enable **MagicDNS** and
+   **HTTPS Certificates**. Funnel needs a real certificate for `*.ts.net`, and
+   the toggle is easy to miss.
+2. **Keys** — <https://login.tailscale.com/admin/settings/keys> →
+   **Generate auth key…** with:
+
+   | setting | value | why |
+   |---|---|---|
+   | Reusable | **on** | a single-use key is consumed by the first runtime, and the next one cannot rejoin under the same name |
+   | Ephemeral | **off** | an ephemeral node is deleted on disconnect, so the `*.ts.net` name would be reassigned |
+   | Tags | none | tagged nodes need extra ACL work for Funnel; a user-owned node just works |
+   | Expiry | as long as allowed (90 d) | you re-generate when it lapses; a revocable key beats a permanent one |
+
+3. Copy it — it looks like `tskey-auth-k...-...` and is shown **once**.
+
+### Setting it
+
+Prefer a **Colab Secret** (🔑 in the left sidebar → add secret named
+`TS_AUTHKEY` → enable notebook access). The config cell reads it automatically
+and never prints it in full:
+
+```
+ngrok token: none | tailscale key: tskey-auth-k1…(63 chars)
+```
+
+Alternatives:
+
+```python
+# config cell, if you accept a credential in the notebook file
+TS_AUTHKEY = "tskey-auth-..."
+```
+
+```bash
+# shell
+export TS_AUTHKEY=tskey-auth-...
+bash colab/serve.sh --tunnel=tailscale
+```
+
+Then set `TUNNEL = "tailscale"` (or leave `auto` — `auto` picks Tailscale when a
+key is present) and `TS_HOSTNAME = "colab-dev"`. Keep `TS_HOSTNAME` constant: it
+*is* the URL.
+
+Treat the key as a password: a reusable one lets anyone holding it join your
+tailnet. Revoke it on the same Keys page when you are done, and never commit it.
 
 ```bash
 WITH_TAILSCALE=1 bash colab/install.sh
