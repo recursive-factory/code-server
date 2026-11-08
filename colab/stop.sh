@@ -33,6 +33,7 @@ rm -f -- "${SD}/supervise.pid"
 cs_stop_pidfile "${SD}/cs.pid" code-server
 cs_stop_pidfile "${SD}/ngrok.pid" ngrok
 cs_stop_pidfile "${SD}/cloudflared.pid" cloudflared
+cs_stop_pidfile "${SD}/zrok.pid" zrok
 
 # Funnel stays configured on the node after the process dies, so reset it or the
 # ts.net hostname keeps advertising a dead port.

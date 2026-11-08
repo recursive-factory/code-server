@@ -19,6 +19,7 @@ CS_PREFIX="${CS_PREFIX:-/usr/local}"
 CS_VERSION="${CS_VERSION:-}"
 WITH_CLOUDFLARED="${WITH_CLOUDFLARED:-0}"
 WITH_TAILSCALE="${WITH_TAILSCALE:-0}"
+WITH_ZROK="${WITH_ZROK:-0}"
 SKIP_APT="${SKIP_APT:-0}"
 
 # ----------------------------------------------------- resolve the version --
@@ -176,6 +177,43 @@ install_tailscale() {
   ok "$(tailscale version 2>/dev/null | head -1)"
 }
 
+# -------------------------------------------------------------------- zrok --
+install_zrok() {
+  if command -v zrok2 >/dev/null 2>&1; then
+    ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    return 0
+  fi
+  local arch tmp url
+  arch="$(cs_arch)"
+  tmp="$(mktemp -d)"
+  log "installing zrok2 (${arch})"
+  url="$(curl -fsSL --max-time 25 https://api.github.com/repos/openziti/zrok/releases/latest \
+    | python3 -c '
+import json, sys
+want = "zrok_" 
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+arch = sys.argv[1]
+for a in d.get("assets", []):
+    n = a.get("name", "")
+    if n.startswith("zrok_") and "linux" in n and arch in n and n.endswith(".tar.gz"):
+        print(a["browser_download_url"])
+        break
+' "$arch" 2>/dev/null || true)"
+  [[ -n "$url" ]] || die "could not resolve the zrok2 release asset"
+  curl -fsSL --retry 3 "$url" -o "${tmp}/zrok.tgz" || die "zrok2 download failed"
+  tar -xzf "${tmp}/zrok.tgz" -C "$tmp"
+  local bin
+  bin="$(find "$tmp" -maxdepth 2 -type f -name 'zrok2' | head -1)"
+  [[ -n "$bin" ]] || die "zrok2 binary not found in the archive"
+  cs_root install -m 0755 "$bin" "${CS_PREFIX}/bin/zrok2"
+  rm -rf -- "$tmp"
+  hash -r
+  ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+}
+
 # ------------------------------------------------------------------- main --
 main() {
   local sd
@@ -201,6 +239,9 @@ main() {
   fi
   if [[ "$WITH_TAILSCALE" == "1" ]]; then
     install_tailscale
+  fi
+  if [[ "$WITH_ZROK" == "1" ]]; then
+    install_zrok
   fi
 
   printf '%s\n' "$version" >"${sd}/.installed-version"

@@ -274,6 +274,29 @@ hostname is stable but only *serves* while a runtime is up (a dead runtime gets 
 connection error, not a 404); and Funnel is still a public endpoint, so it is the
 same exposure as any other tunnel.
 
+### zrok (fixed URL, name-based)
+
+zrok's URL comes from a **reserved name**, not from machine identity — so it
+survives new runtimes in a way Tailscale Funnel cannot:
+
+```
+https://<ZROK_NAME>.share.zrok.io
+```
+
+```bash
+WITH_ZROK=1 bash colab/install.sh
+ZROK_TOKEN=... ZROK_NAME=code bash colab/serve.sh --tunnel=zrok
+```
+
+In the notebook: `ZROK_TOKEN` and `ZROK_NAME`, preferably as Colab Secrets. Set
+`TUNNEL = "zrok"`, or leave `auto` — with both values present and `zrok2`
+installed, `auto` now prefers zrok over Tailscale.
+
+What it does per run: `zrok2 enable` the environment (a fresh environment each
+session is harmless because the URL is the name), reserve the name with
+`zrok2 create name -n public <name>` if it does not exist, then
+`zrok2 share public 127.0.0.1:<port> -n public:<name> --headless`.
+
 ### Not an option: Colab's own port proxy
 
 `google.colab.output.serve_kernel_port_as_window()` can expose a port, but the

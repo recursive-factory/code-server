@@ -25,7 +25,7 @@ usage() {
 usage: serve.sh [options]
 
   --foreground     remain in the foreground until a child exits
-  --tunnel=NAME    auto | ngrok | cloudflared | tailscale | none (default: auto)
+  --tunnel=NAME    auto | ngrok | zrok | cloudflared | tailscale | none (default: auto)
   --port=N         local port  (default: first free in $CS_PORT_RANGE, 3000-5000)
   --no-auth        disable authentication (requires CS_ALLOW_INSECURE=1)
   -h, --help
@@ -48,8 +48,8 @@ if [[ -n "$PORT" ]]; then
   [[ "$PORT" =~ ^[0-9]+$ ]] || die "invalid port: ${PORT}"
 fi
 case "$TUNNEL" in
-  auto|ngrok|cloudflared|tailscale|none) ;;
-  *) die "--tunnel must be auto, ngrok, cloudflared, tailscale or none (got: ${TUNNEL})" ;;
+  auto|ngrok|zrok|cloudflared|tailscale|none) ;;
+  *) die "--tunnel must be auto, ngrok, zrok, cloudflared, tailscale or none (got: ${TUNNEL})" ;;
 esac
 
 # auto: ngrok if it has credentials, otherwise cloudflared quick tunnel, which
@@ -59,6 +59,8 @@ if [[ "$TUNNEL" == "auto" ]]; then
     TUNNEL=ngrok
   elif command -v ngrok >/dev/null 2>&1 && ngrok config check >/dev/null 2>&1; then
     TUNNEL=ngrok
+  elif [[ -n "${ZROK_TOKEN:-}" && -n "${ZROK_NAME:-}" ]] && command -v zrok2 >/dev/null 2>&1; then
+    TUNNEL=zrok
   elif [[ -n "${TS_AUTHKEY:-}" ]] && command -v tailscale >/dev/null 2>&1; then
     TUNNEL=tailscale
   elif command -v cloudflared >/dev/null 2>&1; then
@@ -512,7 +514,70 @@ start_tailscale() {
   return 1
 }
 
+zrok_url() {
+  # The reserved name is the URL host: https://<name>.share.zrok.io
+  if [[ -n "${ZROK_URL:-}" ]]; then
+    printf '%s' "$ZROK_URL"
+    return 0
+  fi
+  local url
+  url="$(grep -oE 'https://[a-z0-9.-]+\.zrok\.io' "${SD}/zrok.log" 2>/dev/null | head -1 || true)"
+  if [[ -z "$url" && -n "${ZROK_NAME:-}" ]]; then
+    url="https://${ZROK_NAME}.share.zrok.io"
+  fi
+  printf '%s' "$url"
+}
+
+start_zrok() {
+  cs_need zrok2 "run: WITH_ZROK=1 bash colab/install.sh"
+  [[ -n "${ZROK_TOKEN:-}" ]] \
+    || die "zrok needs ZROK_TOKEN (account token from https://zrok.io)"
+  [[ -n "${ZROK_NAME:-}" ]] \
+    || die "zrok needs ZROK_NAME — the reserved name, which becomes the URL"
+
+  # Enable this environment once per runtime. The URL does not depend on it, so a
+  # fresh environment each session is harmless (unlike per-node DNS names).
+  export ZROK_DISABLE_TUI=true
+  if ! zrok2 status >/dev/null 2>&1; then
+    log "enabling zrok environment"
+    if ! timeout 90 zrok2 enable "$ZROK_TOKEN" </dev/null >"${SD}/zrok.log" 2>&1; then
+      cs_dump_log "${SD}/zrok.log" 20
+      # Retrying a rejected token cannot help.
+      printf '%serr%s zrok enable failed — check ZROK_TOKEN\n' "$CS_C_RED" "$CS_C_RESET" >&2
+      exit 2
+    fi
+  fi
+
+  # Reserve the name if it does not exist yet; an existing one is fine.
+  if ! timeout 45 zrok2 list names </dev/null 2>/dev/null | grep -qw "${ZROK_NAME}"; then
+    log "reserving zrok name '${ZROK_NAME}'"
+    timeout 45 zrok2 create name -n public "${ZROK_NAME}" </dev/null \
+      >>"${SD}/zrok.log" 2>&1 || warn "create name failed (already reserved is fine)"
+  fi
+
+  log "opening zrok public share for 127.0.0.1:${PORT} as ${ZROK_NAME}"
+  cs_rotate_log "${SD}/zrok.log"
+  nohup zrok2 share public "127.0.0.1:${PORT}" \
+    -n "public:${ZROK_NAME}" --headless \
+    >"${SD}/zrok.log" 2>&1 9>&- &
+  TUN_PID=$!
+  cs_write_pid "${SD}/zrok.pid" "$TUN_PID"
+
+  local i
+  for ((i = 0; i < 45; i++)); do
+    PUBLIC_URL="$(zrok_url)"
+    [[ -n "$PUBLIC_URL" ]] && return 0
+    kill -0 "$TUN_PID" 2>/dev/null || break
+    if ((i > 0 && i % 10 == 0)); then dim "  waiting for zrok share (${i}s)"; fi
+    sleep 1
+  done
+  cs_dump_log "${SD}/zrok.log" 30
+  warn "no zrok URL: check ZROK_TOKEN/ZROK_NAME, or whether the name is already in use"
+  return 1
+}
+
 case "$TUNNEL" in
+  zrok)        start_zrok        || die "tunnel startup failed" ;;
   tailscale)   start_tailscale   || die "tunnel startup failed" ;;
   ngrok)       start_ngrok       || die "tunnel startup failed" ;;
   cloudflared) start_cloudflared || die "tunnel startup failed" ;;

@@ -58,6 +58,12 @@ if command -v ngrok >/dev/null 2>&1; then
 else
   kv "ngrok" "not installed"
 fi
+if command -v zrok2 >/dev/null 2>&1; then
+  kv "zrok2" "$(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if zrok2 status >/dev/null 2>&1; then kv "zrok env" "enabled"; else kv "zrok env" "not enabled"; fi
+else
+  kv "zrok2" "not installed"
+fi
 if command -v cloudflared >/dev/null 2>&1; then
   kv "cloudflared" "$(cloudflared --version 2>/dev/null | awk 'NR==1 { print $3 }')"
 else
