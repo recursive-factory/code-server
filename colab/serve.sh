@@ -303,34 +303,31 @@ if name:
 ' 2>/dev/null || true
 }
 
+ts_backend_state() {
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print(d.get("BackendState") or "")
+' 2>/dev/null || true
+}
+
+# `tailscale status` exits 1 when the node is merely logged out, which is NOT the
+# same as "daemon is down". Using it as the liveness probe started a second
+# tailscaled on every retry: "safesocket.Listen: ... address already in use".
+# `--json` exits 0 whenever the daemon answers, whatever the login state.
+ts_daemon_up() {
+  [[ -S "${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}" ]] || return 1
+  tailscale status --json >/dev/null 2>&1
+}
+
 start_tailscale() {
   cs_need tailscale "run: WITH_TAILSCALE=1 bash colab/install.sh"
   [[ -n "${TS_AUTHKEY:-}" ]] \
     || die "tailscale needs TS_AUTHKEY (admin console -> Settings -> Keys; make it reusable)"
 
-  # Colab has no /dev/net/tun, so tailscaled must run in userspace mode. Serve
-  # and Funnel still work there because tailscaled does the dialing itself.
-  if ! tailscale status >/dev/null 2>&1; then
-    log "starting tailscaled (userspace networking)"
-    cs_rotate_log "${SD}/tailscaled.log"
-    nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 \
-      >"${SD}/tailscaled.log" 2>&1 9>&- &
-    TUN_PID=$!
-    cs_write_pid "${SD}/tailscale.pid" "$TUN_PID"
-    local i
-    for ((i = 0; i < 20; i++)); do
-      tailscale status >/dev/null 2>&1 && break
-      sleep 1
-    done
-  fi
-
-  if ! tailscale status >/dev/null 2>&1; then
-    cs_dump_log "${SD}/tailscaled.log" 30
-    return 1
-  fi
-
-  # The node name *is* the URL (https://<name>.<tailnet>.ts.net), so normalise it
-  # once and validate, rather than letting tailscale reject it later.
   local node
   node="$(printf '%s' "${TS_HOSTNAME:-code}" | tr '[:upper:]' '[:lower:]')"
   case "$node" in
@@ -339,16 +336,56 @@ start_tailscale() {
   esac
   TS_NODE="$node"
 
-  log "joining tailnet as ${TS_NODE}"
-  tailscale up \
-    --authkey="$TS_AUTHKEY" \
-    --hostname="$TS_NODE" \
-    --accept-routes=false >/dev/null 2>&1 \
-    || { warn "tailscale up failed"; tailscale status 2>&1 | head -5 >&2; return 1; }
+  # Colab has no /dev/net/tun, so tailscaled must run in userspace mode. Serve
+  # and Funnel still work there because tailscaled does the dialing itself.
+  if ts_daemon_up; then
+    ok "tailscaled already running — reusing it"
+    TUN_PID=''
+  else
+    log "starting tailscaled (userspace networking)"
+    cs_rotate_log "${SD}/tailscaled.log"
+    nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 \
+      >"${SD}/tailscaled.log" 2>&1 9>&- &
+    TUN_PID=$!
+    cs_write_pid "${SD}/tailscale.pid" "$TUN_PID"
+    local i
+    for ((i = 0; i < 20; i++)); do
+      ts_daemon_up && break
+      sleep 1
+    done
+    if ! ts_daemon_up; then
+      cs_dump_log "${SD}/tailscaled.log" 30
+      return 1
+    fi
+  fi
+
+  local state
+  state="$(ts_backend_state)"
+  if [[ "$state" != "Running" ]]; then
+    log "joining tailnet as ${TS_NODE} (state: ${state:-unknown})"
+    # Never let this hang: an unreachable control plane would otherwise sit here
+    # until the watchdog fires.
+    if ! timeout 120 tailscale up \
+        --authkey="$TS_AUTHKEY" \
+        --hostname="$TS_NODE" \
+        --accept-routes=false >"${SD}/tailscale-up.log" 2>&1; then
+      cs_dump_log "${SD}/tailscale-up.log" 20
+      # Retrying cannot fix a bad credential, so exit 2 ("unrecoverable") and let
+      # supervise.sh stop instead of burning its restart budget.
+      printf '%serr%s tailscale could not join: expired key, or a single-use key already consumed\n' \
+        "$CS_C_RED" "$CS_C_RESET" >&2
+      exit 2
+    fi
+  else
+    # Already joined: keep the name in sync without a new auth (renames on
+    # restart would otherwise silently keep the old URL).
+    tailscale set --hostname="$TS_NODE" >/dev/null 2>&1 \
+      || warn "could not apply TS_HOSTNAME=${TS_NODE} to a running node"
+  fi
 
   log "enabling Funnel for 127.0.0.1:${PORT}"
-  if ! tailscale funnel --bg "$PORT" >"${SD}/tailscale-funnel.log" 2>&1; then
-    cat "${SD}/tailscale-funnel.log" >&2 2>/dev/null || true
+  if ! timeout 120 tailscale funnel --bg "$PORT" >"${SD}/tailscale-funnel.log" 2>&1; then
+    cs_dump_log "${SD}/tailscale-funnel.log" 20
     return 1
   fi
 

@@ -308,6 +308,8 @@ tunnel credentials, live processes, port state, established connections,
 | editor loads, terminal dies | WebSocket not carried by the path in use |
 | `port 8080 is busy` | an orphan from an earlier run; `serve.sh` reclaims it automatically when it looks like ours. If it cannot, the pid and argv are printed — free it or use `--port=<n>` |
 | restart loop, never reaching a URL | a previous supervisor is still alive relaunching the stack. `stop.sh` kills the supervisor *first*, then reclaims the port |
+| `safesocket.Listen: ... address already in use` | a second `tailscaled` was started while one was live. Fixed: liveness now uses `tailscale status --json` (exits 0 whenever the daemon answers) instead of `tailscale status`, which exits 1 merely because the node is logged out |
+| `tailscale could not join` | expired key, or a single-use key already consumed. Exits 2 so the supervisor stops instead of retrying something a retry cannot fix |
 | stuck on `waiting for cloudflared URL` | quick-tunnel registration is slow or rate-limited; set `NGROK_TOKEN` |
 | stuck on `waiting for .../healthz` | startup crash — read `code-server.log` |
 | `extensions already installed` but missing | delete `$CS_STATE_DIR/.extensions-*` and restart |
