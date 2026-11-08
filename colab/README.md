@@ -52,6 +52,15 @@ bash colab/install.sh
 bash colab/serve.sh
 ```
 
+## If a restart breaks the URL
+
+Two stale-state traps, both handled by `serve.sh` now, and both worth knowing:
+
+| symptom | cause | fix |
+|---|---|---|
+| `name ... is in use by share <token>` | a share from an earlier runtime still holds the reserved name and points at that runtime's port | `serve.sh` runs `zrok2 delete share <name>` first (`ZROK_RELEASE=0` disables). By hand: `zrok2 delete share codesrv` then restart |
+| the scripts you just pushed aren't running | `raw.githubusercontent.com`/an egress proxy served a cached copy of the path | the notebook appends `?v=<sha>`; by hand, `curl ".../colab/serve.sh?v=$SHA"` |
+
 ## Flow and logs
 
 ```
