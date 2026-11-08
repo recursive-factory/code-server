@@ -209,6 +209,77 @@ print(n)
   printf '%s' "${n:-0}"
 }
 
+# A code-server process does not keep "code-server --bind-addr" in its argv: the
+# bin/code-server wrapper re-execs, so argv looks like
+#   .../lib/code-server-<ver>/lib/node .../out/node/entry.js --bind-addr 127.0.0.1:8080
+# which is why pattern-matching pkill misses orphaned instances. Resolve the
+# socket owner instead.
+cs_cmdline() {
+  tr '\0' ' ' <"/proc/${1}/cmdline" 2>/dev/null | sed 's/ *$//' || true
+}
+
+cs_port_owner_pids() {
+  local p=$1
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnpH 2>/dev/null | awk -v pat=":${p}\$" '$4 ~ pat' \
+      | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null | sort -u || true
+    return 0
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp "$p" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true
+  fi
+  return 0
+}
+
+cs_port_report() {
+  local p=$1 owners pid
+  owners="$(cs_port_owner_pids "$p")"
+  if [[ -z "$owners" ]]; then
+    warn "port ${p} is in use but the owner could not be identified"
+    return 0
+  fi
+  for pid in $owners; do
+    warn "port ${p} owned by pid ${pid}: $(cs_cmdline "$pid" | cut -c1-100)"
+  done
+}
+
+# Reclaim the port from a previous run of this stack. Refuses to touch anything
+# that does not look like our own processes.
+cs_free_port() {
+  local p=$1 owners pid cmd i
+  owners="$(cs_port_owner_pids "$p")"
+  [[ -n "$owners" ]] || return 0
+
+  for pid in $owners; do
+    cmd="$(cs_cmdline "$pid")"
+    case "$cmd" in
+      *entry.js*|*code-server*|*ngrok*|*cloudflared*)
+        warn "reclaiming port ${p} from pid ${pid}: ${cmd:0:80}"
+        kill -TERM "$pid" 2>/dev/null || true
+        ;;
+      *)
+        warn "port ${p} is held by an unrelated process (pid ${pid}): ${cmd:0:80}"
+        return 1
+        ;;
+    esac
+  done
+
+  for i in {1..20}; do
+    cs_port_in_use "$p" || return 0
+    sleep 0.3
+  done
+  for pid in $owners; do kill -KILL "$pid" 2>/dev/null || true; done
+  for i in {1..10}; do
+    cs_port_in_use "$p" || return 0
+    sleep 0.3
+  done
+  return 1
+}
+
 # -------------------------------------------------------------- password ----
 # Persisted in the state dir so a restart does not invalidate an open tab.
 # CS_PASSWORD overrides without touching disk.

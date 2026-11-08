@@ -104,7 +104,15 @@ cs_stop_pidfile "${SD}/ngrok.pid" ngrok
 cs_stop_pidfile "${SD}/cloudflared.pid" cloudflared
 
 if cs_port_in_use "$PORT"; then
-  die "port ${PORT} is still in use — another process owns it (try --port=<n>)"
+  log "port ${PORT} is occupied; attempting to reclaim it"
+  if ! cs_free_port "$PORT"; then
+    cs_port_report "$PORT"
+    printf '%serr%s port %s is busy and not reclaimable — free it or use --port=<n>\n' \
+      "$CS_C_RED" "$CS_C_RESET" "$PORT" >&2
+    # Exit code 2 means "retrying will not help"; supervise.sh stops on it.
+    exit 2
+  fi
+  ok "port ${PORT} reclaimed"
 fi
 
 # --------------------------------------------------------- extensions ----

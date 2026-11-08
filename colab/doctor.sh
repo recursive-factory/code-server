@@ -78,6 +78,10 @@ if cs_alive "${SD}/cloudflared.pid"; then
 fi
 
 kv "port ${PORT}" "$(cs_port_in_use "$PORT" && echo 'in use' || echo 'free')"
+owners="$(cs_port_owner_pids "$PORT")"
+for pid in $owners; do
+  kv "port ${PORT} owner" "pid ${pid}: $(cs_cmdline "$pid" | cut -c1-70)"
+done
 kv "established conns" "$(cs_active_conns "$PORT")"
 
 if curl -fsS --max-time 2 --noproxy '*' "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then

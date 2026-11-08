@@ -54,12 +54,12 @@ watch_stack() {
     fi
     if ((SECONDS - last_active > IDLE_TIMEOUT)); then
       log "no connections for ${IDLE_TIMEOUT}s — shutting down"
-      bash "${HERE}/stop.sh" || true
+      CS_FROM_SUPERVISOR=1 bash "${HERE}/stop.sh" || true
       return 10
     fi
     if ((SECONDS - started > MAX_RUNTIME)); then
       log "max runtime ${MAX_RUNTIME}s reached — shutting down"
-      bash "${HERE}/stop.sh" || true
+      CS_FROM_SUPERVISOR=1 bash "${HERE}/stop.sh" || true
       return 11
     fi
   done
@@ -72,15 +72,22 @@ delay=2
 while :; do
   t0=$SECONDS
 
-  if bash "${HERE}/serve.sh" "$@" 9>&-; then
+  srv_rc=0
+  bash "${HERE}/serve.sh" "$@" 9>&- || srv_rc=$?
+
+  if ((srv_rc == 0)); then
     rc=0
     watch_stack || rc=$?
     case "$rc" in
       10|11) log "stopped cleanly"; exit 0 ;;
     esac
     [[ "$rc" -eq 0 ]] && continue
+  elif ((srv_rc == 2)); then
+    # Unrecoverable (e.g. the port is held by something that is not ours).
+    # Restarting would just burn the retry budget and hide the real message.
+    die "cannot start on port ${PORT}; see the error above"
   else
-    warn "serve.sh failed to start"
+    warn "serve.sh failed to start (exit ${srv_rc})"
   fi
 
   uptime=$((SECONDS - t0))
