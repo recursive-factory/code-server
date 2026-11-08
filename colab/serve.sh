@@ -212,6 +212,7 @@ start_ngrok() {
     PUBLIC_URL="$(ngrok_public_url)"
     [[ -n "$PUBLIC_URL" ]] && return 0
     kill -0 "$TUN_PID" 2>/dev/null || break
+    if ((i > 0 && i % 10 == 0)); then dim "  waiting for ngrok URL (${i}s)"; fi
     sleep 1
   done
 
@@ -253,6 +254,7 @@ start_cloudflared() {
       "${SD}/cloudflared.log" 2>/dev/null | head -1 || true)"
     [[ -n "$PUBLIC_URL" ]] && return 0
     kill -0 "$TUN_PID" 2>/dev/null || break
+    if ((i > 0 && i % 10 == 0)); then dim "  waiting for cloudflared URL (${i}s)"; fi
     sleep 1
   done
 

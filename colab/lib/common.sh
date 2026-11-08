@@ -162,6 +162,11 @@ cs_wait_http() {
     if curl -fsS --max-time 2 --noproxy '*' "$url" >/dev/null 2>&1; then
       return 0
     fi
+    # First start on a fresh VM is not instant; emit a heartbeat so a slow run
+    # is distinguishable from a hung one when reading the log afterwards.
+    if ((i > 0 && i % 15 == 0)); then
+      dim "  waiting for ${url} (${i}s)"
+    fi
     sleep 1
   done
   return 1

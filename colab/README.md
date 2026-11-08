@@ -53,6 +53,38 @@ bash colab/install.sh
 bash colab/serve.sh
 ```
 
+## Flow and logs
+
+```
+install.sh                   slow: 1–3 min on a fresh runtime
+  apt runtime libs → code-server tarball (~100 MB) → ngrok → cloudflared
+
+supervise.sh                 returns immediately, runs detached
+  └─ serve.sh
+       clear stale pidfiles
+       port check
+       code-server → poll /healthz            5–90 s
+       tunnel      → poll for public URL     10–60 s
+       write credentials.txt → print URL + password
+  └─ restart on crash, stop on idle / max runtime
+```
+
+| File | Contents |
+|---|---|
+| `$CS_STATE_DIR/supervise.out` | **progress log**, one line per stage |
+| `$CS_STATE_DIR/code-server.log` | editor server; startup crashes land here |
+| `$CS_STATE_DIR/cloudflared.log` | tunnel registration, public URL |
+| `$CS_STATE_DIR/ngrok.log` | JSON; look for `ERR_NGROK_4018`, `ERR_NGROK_108` |
+| `$CS_STATE_DIR/credentials.txt` | `url=` / `password=` / `tunnel=` |
+
+Health and tunnel waits emit a heartbeat every 10–15 s (`waiting for ... (30s)`),
+so a slow start is distinguishable from a hung one. If `serve.sh` stops making
+progress, the last line of `supervise.out` names the stage.
+
+First run is slow for reasons that are not code-server: `apt-get` on a fresh
+image, ~150 MB of downloads, and tunnel registration. `auto` picks ngrok when it
+has a token (fast) and cloudflared otherwise (no account, slower to register).
+
 ## Tunnels
 
 ### ngrok (default)
@@ -163,6 +195,8 @@ tunnel credentials, live processes, port state, established connections,
 | stale 404 URL | previous runtime's URL; re-run `serve.sh` |
 | editor loads, terminal dies | WebSocket not carried by the path in use |
 | `die: port 8080 in use` | orphaned process; `bash colab/stop.sh` |
+| stuck on `waiting for cloudflared URL` | quick-tunnel registration is slow or rate-limited; set `NGROK_TOKEN` |
+| stuck on `waiting for .../healthz` | startup crash — read `code-server.log` |
 | `extensions already installed` but missing | delete `$CS_STATE_DIR/.extensions-*` and restart |
 
 ## Hardening notes
