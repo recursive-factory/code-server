@@ -97,6 +97,30 @@ if [[ -s "${SD}/credentials.txt" ]]; then
     | sed 's/^/   /'
 fi
 
+section "public URL"
+if [[ -s "${SD}/credentials.txt" ]]; then
+  pub_url="$(sed -n 's/^url=//p' "${SD}/credentials.txt" | head -1)"
+  pub_tunnel="$(sed -n 's/^tunnel=//p' "${SD}/credentials.txt" | head -1)"
+  kv "tunnel" "${pub_tunnel:-?}"
+  kv "url" "${pub_url:-?}"
+  case "$pub_url" in
+    https://*)
+      resp="$(curl -sS --max-time 8 --noproxy '*' "$pub_url" 2>/dev/null || true)"
+      status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --noproxy '*' "$pub_url" 2>/dev/null || true)"
+      case "$resp" in
+        *"error code: 1033"*)
+          bad "public URL is dead (Cloudflare 1033): no connector attached — the tunnel process is gone" ;;
+        *"error code: 502"*|*"error code: 530"*)
+          bad "public URL returns Cloudflare ${status}: tunnel up but origin not reachable" ;;
+        *)
+          kv "reachable" "HTTP ${status:-?}" ;;
+      esac
+      ;;
+  esac
+else
+  kv "url" "no credentials.txt yet (stack has not started in this state dir)"
+fi
+
 section "logs"
 for f in code-server.log ngrok.log cloudflared.log extensions.log; do
   if [[ -f "${SD}/${f}" ]]; then

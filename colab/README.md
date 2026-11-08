@@ -171,7 +171,7 @@ bash colab/supervise.sh
 | `CS_VERSION` | latest | pin a code-server version |
 | `CS_PREFIX` | `/usr/local` | install prefix |
 | `CS_EXTENSIONS` | — | comma-separated extension IDs, installed once |
-| `CS_IDLE_TIMEOUT` | `1800` | supervise: idle seconds before shutdown |
+| `CS_IDLE_TIMEOUT` | `1800` | supervise: idle seconds before shutdown; `0` disables the idle watchdog |
 | `CS_MAX_RUNTIME` | `39600` | supervise: total seconds before shutdown |
 | `CS_MAX_RESTARTS` | `20` | supervise: consecutive failures before giving up |
 | `CS_ALLOW_INSECURE` | `0` | must be `1` to accept `--no-auth` |
@@ -206,6 +206,7 @@ tunnel credentials, live processes, port state, established connections,
 | blank page, no editor | ngrok warning page not clicked through |
 | `ERR_NGROK_4018` | no authtoken: `ngrok config add-authtoken <token>` |
 | `ERR_NGROK_108` | free tier allows one agent session; `bash colab/stop.sh` first |
+| Cloudflare **error 1033** | the tunnel hostname resolves but no connector is attached — cloudflared died, or you are using a hostname from a previous run. Quick tunnels get a new hostname per start, so always take the URL from `credentials.txt`; `doctor.sh` now probes it and names 1033 |
 | stale 404 URL | previous runtime's URL; re-run `serve.sh` |
 | editor loads, terminal dies | WebSocket not carried by the path in use |
 | `port 8080 is busy` | an orphan from an earlier run; `serve.sh` reclaims it automatically when it looks like ours. If it cannot, the pid and argv are printed — free it or use `--port=<n>` |

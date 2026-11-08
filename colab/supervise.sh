@@ -26,7 +26,7 @@ HEALTHY_AFTER="${CS_HEALTHY_AFTER:-600}"    # uptime that resets the backoff
 MAX_BACKOFF="${CS_MAX_BACKOFF:-60}"
 MAX_RESTARTS="${CS_MAX_RESTARTS:-20}"
 
-[[ "$IDLE_TIMEOUT" =~ ^[0-9]+$ ]] || die "CS_IDLE_TIMEOUT must be a number of seconds"
+[[ "$IDLE_TIMEOUT" =~ ^[0-9]+$ ]] || die "CS_IDLE_TIMEOUT must be a number of seconds (0 disables)"
 [[ "$MAX_RUNTIME" =~ ^[0-9]+$ ]]  || die "CS_MAX_RUNTIME must be a number of seconds"
 
 cs_need code-server "run: bash colab/install.sh"
@@ -40,7 +40,18 @@ trap 'cs_unlock' EXIT
 stack_alive() {
   local cs_pid
   cs_pid="$(cs_read_pid "${SD}/cs.pid")"
-  [[ -n "$cs_pid" ]] && kill -0 "$cs_pid" 2>/dev/null
+  if [[ -z "$cs_pid" ]] || ! kill -0 "$cs_pid" 2>/dev/null; then
+    return 1
+  fi
+  # The tunnel counts too. If cloudflared/ngrok dies while code-server lives on,
+  # the public hostname stays up at Cloudflare's edge but has no connector
+  # behind it, so visitors get error 1033. Treat that as a dead stack so the
+  # supervisor restarts and publishes a fresh URL, instead of serving a URL that
+  # can never work again.
+  if [[ -s "${SD}/ngrok.pid" || -s "${SD}/cloudflared.pid" ]]; then
+    cs_alive "${SD}/ngrok.pid" || cs_alive "${SD}/cloudflared.pid" || return 1
+  fi
+  return 0
 }
 
 # Returns: 0 = still running, 10 = idle shutdown, 11 = max runtime reached,
@@ -53,7 +64,8 @@ watch_stack() {
     if [[ "${conns:-0}" -gt 0 ]]; then
       last_active=$SECONDS
     fi
-    if ((SECONDS - last_active > IDLE_TIMEOUT)); then
+    # CS_IDLE_TIMEOUT=0 disables the idle watchdog entirely.
+    if ((IDLE_TIMEOUT > 0 && SECONDS - last_active > IDLE_TIMEOUT)); then
       log "no connections for ${IDLE_TIMEOUT}s — shutting down"
       CS_FROM_SUPERVISOR=1 bash "${HERE}/stop.sh" || true
       return 10
@@ -80,6 +92,9 @@ while :; do
     PORT="$(cs_resolved_port "$SD")"
     rc=0
     watch_stack || rc=$?
+    if ((rc == 1)); then
+      warn "stack died (code-server or tunnel exited) — restarting; the public URL will change"
+    fi
     case "$rc" in
       10|11) log "stopped cleanly"; exit 0 ;;
     esac
