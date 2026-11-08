@@ -207,6 +207,7 @@ tunnel credentials, live processes, port state, established connections,
 | blank page, no editor | ngrok warning page not clicked through |
 | `ERR_NGROK_4018` | no authtoken: `ngrok config add-authtoken <token>` |
 | `ERR_NGROK_108` | free tier allows one agent session; `bash colab/stop.sh` first |
+| URL died within seconds of appearing | `Runtime → Run all` also runs the Stop cell. It is now opt-in (`STOP = True`), but any older copy will still tear the stack down right after printing the URL |
 | Cloudflare **error 1033** | the tunnel hostname resolves but no connector is attached — cloudflared died, or you are using a hostname from a previous run. Quick tunnels get a new hostname per start, so always take the URL from `credentials.txt`; `doctor.sh` now probes it and names 1033 |
 | stale 404 URL | previous runtime's URL; re-run `serve.sh` |
 | editor loads, terminal dies | WebSocket not carried by the path in use |

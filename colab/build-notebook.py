@@ -371,22 +371,33 @@ if supervise_log.exists():
 
 !bash "{BASE}/doctor.sh"
 """),
-    md("## 8. Stop"),
+    md("""
+## 8. Stop (opt-in)
+
+Does nothing unless `STOP = True`, because **Runtime → Run all** executes this
+cell too — that is what ended a session one second after its URL appeared. Set
+the flag and run only this cell when you want to stop.
+"""),
     code("""
-import os, pathlib, signal
+STOP = False        # set True, then run THIS cell alone
 
-STATE = pathlib.Path(os.environ.get("CS_STATE_DIR", "/content/.code-server"))
-pid_file = STATE / "supervise.pid"
-if pid_file.exists():
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.killpg(os.getpgid(pid), signal.SIGTERM)   # supervisor was started detached
-        print("stopped supervisor", pid)
-    except (ValueError, ProcessLookupError, PermissionError):
-        pass
-    pid_file.unlink(missing_ok=True)
+import os, pathlib, signal, subprocess
 
-!bash "{BASE}/stop.sh"
+if not STOP:
+    print("skipped: 'Run all' executes this cell too, so stopping is opt-in.")
+    print("To shut the stack down: set STOP = True and run this cell alone.")
+    print("It also stops by itself after CS_IDLE_TIMEOUT with no connections.")
+else:
+    STATE = pathlib.Path(os.environ.get("CS_STATE_DIR", "/content/.code-server"))
+    pid = STATE / "supervise.pid"
+    if pid.exists():
+        try:
+            os.killpg(os.getpgid(int(pid.read_text().strip())), signal.SIGTERM)
+            print("stopped supervisor")
+        except (ValueError, ProcessLookupError):
+            pass
+        pid.unlink(missing_ok=True)
+    subprocess.run(["bash", str(BASE / "stop.sh")], check=False)
 """),
     md("""
 ## Troubleshooting
