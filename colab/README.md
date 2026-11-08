@@ -26,8 +26,8 @@ equally reachable:
 |---|---|---|
 | `/proc/<pid>/cmdline`, process name | anything inside the VM | yes, trivially — and it does not matter: Colab's enforcement is not a per-process scanner. code-server's own children (`node`, extension hosts, every terminal you open) keep the real names, so a renamed parent is *inconsistent*, which is a worse signal than an honest one. |
 | filesystem writes | the VM itself | yes, pointless — the disk is wiped per runtime |
-| egress SNI / hostname (`*.ngrok-free.app`) | the network path | only by using your own domain on a named tunnel. That is not disguise, it is hosting — see below. |
-| tunnel-side HTTP/WS shape (`/websocket`, asset paths) | ngrok / Cloudflare edge, not Google | no reason to care |
+| egress SNI / hostname (`*.shares.zrok.io`, `*.trycloudflare.com`) | the network path | only by using your own domain on a named tunnel. That is not disguise, it is hosting. |
+| tunnel-side HTTP/WS shape (`/websocket`, asset paths) | the tunnel provider's edge, not Google | no reason to care |
 | runtime behaviour: idle GPU VM, session length, zero executed cells, memory/CPU profile | Google, account level | **no** — and this is the layer that gets actioned |
 | account / session count / IP reputation | Google | no |
 
@@ -37,7 +37,7 @@ address the underlying complaints properly:
 
 * **rotating URL** → named Cloudflare tunnel on your own domain, stable across
   restarts (`CF_TOKEN` + `CF_TUNNEL_URL`), no interstitial page
-* **blank page on ngrok** → reserved ngrok domain (`NGROK_DOMAIN`)
+* **blank page on a cloudflared quick tunnel** → click the interstitial, or use zrok
 * **VM held open for hours for nothing** → `supervise.sh` idle and max-runtime
   watchdogs. This is also the honest fix for "less noticeable": a GPU VM idling
   with no interactive traffic is the actual pattern that gets throttled, and
@@ -48,7 +48,7 @@ Traffic or process respoofing is deliberately not implemented.
 ## Quick start
 
 ```bash
-export NGROK_TOKEN=...        # dashboard.ngrok.com/get-started/your-authtoken
+export ZROK_TOKEN=... ZROK_NAME=codesrv   # fixed https://codesrv.shares.zrok.io
 bash colab/install.sh
 bash colab/serve.sh
 ```
@@ -57,7 +57,7 @@ bash colab/serve.sh
 
 ```
 install.sh                   slow: 1–3 min on a fresh runtime
-  apt runtime libs → code-server tarball (~100 MB) → ngrok → cloudflared
+  apt runtime libs → code-server tarball (~100 MB) → zrok2 + cloudflared
 
 supervise.sh                 returns immediately, runs detached
   └─ serve.sh
@@ -74,7 +74,6 @@ supervise.sh                 returns immediately, runs detached
 | `$CS_STATE_DIR/supervise.out` | **progress log**, one line per stage |
 | `$CS_STATE_DIR/code-server.log` | editor server; startup crashes land here |
 | `$CS_STATE_DIR/cloudflared.log` | tunnel registration, public URL |
-| `$CS_STATE_DIR/ngrok.log` | JSON; look for `ERR_NGROK_4018`, `ERR_NGROK_108` |
 | `$CS_STATE_DIR/credentials.txt` | `url=` / `password=` / `tunnel=` |
 
 Health and tunnel waits emit a heartbeat every 10–15 s (`waiting for ... (30s)`),
@@ -82,239 +81,63 @@ so a slow start is distinguishable from a hung one. If `serve.sh` stops making
 progress, the last line of `supervise.out` names the stage.
 
 First run is slow for reasons that are not code-server: `apt-get` on a fresh
-image, ~150 MB of downloads, and tunnel registration. `auto` picks ngrok when it
+image, ~150 MB of downloads, and tunnel registration. `auto` picks zrok when it
 has a token (fast) and cloudflared otherwise (no account, slower to register).
 
 ## Tunnels
 
-### ngrok (default)
+Two providers. `auto` picks zrok when a token and a name are present, otherwise
+cloudflared.
 
-```bash
-bash colab/serve.sh                                      # auto-selects a tunnel
-CS_TUNNEL=ngrok bash colab/serve.sh
-NGROK_DOMAIN=my-dev.ngrok-free.app bash colab/serve.sh   # reserved, stable
-NGROK_BASIC_AUTH='user:pass' bash colab/serve.sh         # gate at the edge
-```
+### zrok — fixed URL (preferred)
 
-Free tier shows a "You are about to visit" page on the first browser hit. Click
-through it before the editor loads, otherwise the JS assets are served as HTML
-and you get a blank page. Free tier also allows one agent session and rotates
-the hostname unless you reserve a domain.
-
-### cloudflared (no interstitial, supports a real domain)
-
-```bash
-WITH_CLOUDFLARED=1 bash colab/install.sh
-bash colab/serve.sh --tunnel=cloudflared            # https://<rand>.trycloudflare.com
-```
-
-Named tunnel, stable hostname, no warning page:
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create colab
-cloudflared tunnel route dns colab code.example.com
-# then, per session:
-CF_TOKEN=<tunnel-token> CF_TUNNEL_URL=https://code.example.com \
-  bash colab/serve.sh --tunnel=cloudflared
-```
-
-This is the durable option. Nothing is being hidden: the traffic is a normal
-TLS connection to a domain you control.
-
-### Tailscale Funnel (fixed URL off a free account)
-
-Funnel gives you a **stable** `https://<machine>.<tailnet>.ts.net` hostname
-instead of a new one per start. It is available on **all plans, including free**
-(currently beta), and only the edge ports `443`, `8443` and `10000` are public —
-the local port stays whatever `serve.sh` picked.
-
-### Getting an auth key
-
-One-time setup, in the Tailscale admin console:
-
-1. **DNS** — <https://login.tailscale.com/admin/dns> → enable **MagicDNS** and
-   **HTTPS Certificates**. Funnel needs a real certificate for `*.ts.net`, and
-   the toggle is easy to miss.
-2. **Keys** — <https://login.tailscale.com/admin/settings/keys> →
-   **Generate auth key…** with:
-
-   | setting | value | why |
-   |---|---|---|
-   | Reusable | **on** | a single-use key is consumed by the first runtime, and the next one cannot rejoin under the same name |
-   | Ephemeral | **off** | an ephemeral node is deleted on disconnect, so the `*.ts.net` name would be reassigned |
-   | Tags | none | tagged nodes need extra ACL work for Funnel; a user-owned node just works |
-   | Expiry | as long as allowed (90 d) | you re-generate when it lapses; a revocable key beats a permanent one |
-
-3. Copy it — it looks like `tskey-auth-k...-...` and is shown **once**.
-
-### Why the URL can turn into `code-1`
-
-Funnel URLs are per **node identity**. Colab wipes the VM per runtime, so a new
-session registers as a brand-new machine; if the previous `code` node still
-exists, Tailscale appends a suffix and your bookmark breaks:
-
-- `code.tailnet.ts.net` — the old node's public DNS record, now pointing at a
-  node with no connector (TLS reset / connection refused)
-- `code-1.tailnet.ts.net` — the live node, often with no public record yet
-  (`DNS_PROBE_POSSIBLE` in the browser)
-
-Three ways to keep one hostname:
-
-| approach | effect |
-|---|---|
-| `TS_EPHEMERAL=1` | nodes delete themselves when the runtime dies, freeing the name for the next one |
-| delete the stale machine at <https://login.tailscale.com/admin/machines> | reclaims the exact name immediately |
-| named cloudflared tunnel (`CF_TOKEN` + `CF_TUNNEL_URL`) | a genuinely permanent hostname, independent of node identity |
-
-### Automatic reclaim
-
-`TS_RECLAIM=1` with an API token deletes stale devices named `TS_HOSTNAME` before
-joining, then re-registers so the name is actually claimed:
-
-```bash
-TS_API_KEY=tskey-api-... TS_RECLAIM=1 TS_HOSTNAME=code bash colab/serve.sh --tunnel=tailscale
-```
-
-Create the token at <https://login.tailscale.com/admin/settings/keys> → **API
-access token**. It needs `devices:write` (the default for a full token); it is
-separate from the node auth key. Configure it in the notebook as `TS_API_KEY`,
-preferably via a Colab Secret.
-
-| behaviour | detail |
-|---|---|
-| never deletes itself | the current node's ID is excluded from the match |
-| only exact hostname matches | `code` matches `code` and `code.tailnet.ts.net`, never `code-1` or another machine |
-| re-registers when needed | if the node is already joined as `code-1`, a rename alone will not help, so it logs out and rejoins to claim `code` |
-| off by default | without `TS_RECLAIM=1` nothing is deleted |
-
-Deleting a device is destructive and immediate. Prefer `TS_EPHEMERAL=1` if you
-only want names to stop accumulating.
-
-`serve.sh` keeps node state in `$CS_STATE_DIR/tailscale-state` so a restart
-*within* one VM reuses the same identity instead of registering again, and warns
-when Tailscale hands back a suffixed name.
-
-### Setting it
-
-Three places, in precedence order. First non-empty wins:
-
-1. the notebook config cell (`TS_AUTHKEY = "tskey-auth-..."`)
-2. a real environment variable — `%env TS_AUTHKEY=tskey-auth-...`, or
-   `export TS_AUTHKEY=...` before `bash colab/serve.sh`
-3. a **Colab Secret** named `TS_AUTHKEY`
-
-Note that (3) is *not* an environment variable. Colab Secrets are only reachable
-through `userdata.get('TS_AUTHKEY')`; they are never exported into `os.environ`,
-so a script that reads `$TS_AUTHKEY` will not see one. That is why the config
-cell resolves secrets explicitly and then exports the result:
-
-```python
-tskey = _resolve(TS_AUTHKEY, "TS_AUTHKEY")   # cell -> env -> userdata.get
-if tskey:
-    os.environ["TS_AUTHKEY"] = tskey
-```
-
-The write-back is conditional on purpose: assigning unconditionally would
-overwrite a key that came from a real environment variable with an empty string.
-
-Failure modes the helper reports instead of silently returning empty:
-
-| what you see | meaning |
-|---|---|
-| `[secret] 'TS_AUTHKEY' exists but notebook access is off` | the secret is there, the toggle isn't — Secrets panel → grant access |
-| `tailscale key: none`, no message | the secret does not exist under that exact name |
-| `tailscale key: tskey-auth-k1…(63 chars)` | resolved; run the next cell |
-
-Prefer the environment variable or a **Colab Secret** (🔑 in the left sidebar → add secret named
-`TS_AUTHKEY` → enable notebook access). The config cell reads it automatically
-and never prints it in full:
-
-```
-ngrok token: none | tailscale key: tskey-auth-k1…(63 chars)
-```
-
-Alternatives:
-
-```python
-# config cell, if you accept a credential in the notebook file
-TS_AUTHKEY = "tskey-auth-..."
-```
-
-```bash
-# shell
-export TS_AUTHKEY=tskey-auth-...
-bash colab/serve.sh --tunnel=tailscale
-```
-
-Then set `TUNNEL = "tailscale"` (or leave `auto` — `auto` picks Tailscale when a
-key is present) and `TS_HOSTNAME = "code"` (the default). Keep `TS_HOSTNAME` constant: it
-*is* the URL.
-
-Treat the key as a password: a reusable one lets anyone holding it join your
-tailnet. Revoke it on the same Keys page when you are done, and never commit it.
-
-```bash
-WITH_TAILSCALE=1 bash colab/install.sh
-TS_AUTHKEY=tskey-auth-... bash colab/serve.sh --tunnel=tailscale   # -> https://code.<tailnet>.ts.net
-```
-
-Or in the notebook: `TUNNEL = "tailscale"`, `TS_AUTHKEY = "tskey-auth-..."`,
-`TS_HOSTNAME = "code"` (the default). The URL is reported per run and is the same every
-time, so `https://colab-dev.<tailnet>.ts.net` becomes a bookmark.
-
-How it works on Colab: there is no `/dev/net/tun`, so `tailscaled` runs with
-`--tun=userspace-networking`, and Funnel/Serve still function because tailscaled
-dials `127.0.0.1:<port>` itself. `stop.sh` runs `tailscale funnel reset`,
-otherwise the hostname keeps advertising a dead port.
-
-Costs of the fixed URL, so nobody is surprised: traffic is relayed through
-Tailscale rather than direct, so latency is higher than ngrok/cloudflared; the
-hostname is stable but only *serves* while a runtime is up (a dead runtime gets a
-connection error, not a 404); and Funnel is still a public endpoint, so it is the
-same exposure as any other tunnel.
-
-### zrok (fixed URL, name-based)
-
-zrok's URL comes from a **reserved name**, not from machine identity — so it
-survives new runtimes in a way Tailscale Funnel cannot:
+The URL is derived from a **reserved name**, not from machine identity, so a new
+Colab runtime gets the same address:
 
 ```
 https://<ZROK_NAME>.shares.zrok.io
 ```
 
 ```bash
-WITH_ZROK=1 bash colab/install.sh
-ZROK_TOKEN=... ZROK_NAME=code bash colab/serve.sh --tunnel=zrok
+ZROK_TOKEN=... ZROK_NAME=codesrv bash colab/serve.sh
 ```
 
-In the notebook: `ZROK_TOKEN` and `ZROK_NAME`, preferably as Colab Secrets. Set
-`TUNNEL = "zrok"`, or leave `auto` — with both values present and `zrok2`
-installed, `auto` now prefers zrok over Tailscale.
-
-What it does per run:
+Per run it does:
 
 ```bash
-zrok2 enable "$ZROK_TOKEN" --headless          # --headless is required, no TTY
-zrok2 create name -n public "$ZROK_NAME"       # skipped when it already exists
+zrok2 enable "$ZROK_TOKEN" --headless        # --headless is required, there is no TTY
+zrok2 create name -n public "$ZROK_NAME"     # skipped when it already exists
 zrok2 share public 127.0.0.1:<port> -n "public:$ZROK_NAME" --headless
 ```
 
-Two things that bite:
+Things that bite:
 
 * **`--headless` is mandatory** — without it `zrok2 enable` dies with
-  `open /dev/tty: no such device`. "already have an enabled environment" is
-  treated as success.
-* **Public names are global.** `create name` returning `409 conflict` means
-  another zrok user owns that name — pick a different `ZROK_NAME`. `code`,
-  for instance, is taken.
+  `open /dev/tty: no such device`. "already have an enabled environment" counts
+  as success.
+* **Public names are global.** `409 conflict` from `create name` means another
+  zrok user owns it, not that you already reserved it. `code` is taken;
+  `codesrv` was free.
+* The domain is **`shares`**.zrok.io (plural), and v2.0.9 logs the endpoint with
+  no scheme, so the script matches the bare host and prefixes `https://`.
 
-### Not an option: Colab's own port proxy
+### cloudflared — fallback, no account
 
-`google.colab.output.serve_kernel_port_as_window()` can expose a port, but the
-proxy is built around Jupyter kernel channels and does not reliably carry the
-long-lived bidirectional WebSocket the VS Code web client needs. The editor may
-load and then lose its terminal. That is why every working setup uses a tunnel.
+Used automatically when no zrok credentials are configured. Needs nothing, but
+the quick-tunnel hostname is per process, so it changes every start:
+
+```bash
+bash colab/serve.sh --tunnel=cloudflared     # https://<random>.trycloudflare.com
+```
+
+A named tunnel gives a stable hostname instead:
+
+```bash
+CF_TOKEN=<tunnel-token> CF_TUNNEL_URL=https://code.example.com bash colab/serve.sh
+```
+
+The free quick tunnel shows a "You are about to visit" interstitial; click
+through it before the editor loads, or the JS assets come back as HTML.
 
 ## Supervision
 
@@ -331,16 +154,9 @@ bash colab/supervise.sh
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NGROK_TOKEN` | — | ngrok authtoken, or add it once with `ngrok config add-authtoken` |
-| `NGROK_DOMAIN` | — | reserved domain → stable hostname, no rotation |
-| `NGROK_BASIC_AUTH` | — | `user:pass`, rejects scanners at ngrok's edge |
 | `CF_TOKEN` | — | Cloudflare named-tunnel token |
 | `CF_TUNNEL_URL` | — | public hostname to report for a named tunnel |
-| `TS_AUTHKEY` | — | Tailscale auth key; set it and `auto` prefers Funnel. Make it **reusable** |
-| `TS_HOSTNAME` | `code` | node name, and therefore the `*.ts.net` hostname — `code` gives `https://code.<tailnet>.ts.net`. Lowercased and validated before use; keep it fixed |
-| `TS_TUNNEL_URL` | — | override the reported URL instead of reading it from `tailscale status` |
-| `WITH_TAILSCALE` | `0` | `install.sh` also installs `tailscale` + `tailscaled` |
-| `CS_TUNNEL` | `auto` | `auto` \| `ngrok` \| `cloudflared` \| `tailscale` \| `none`. `auto` = ngrok when it has credentials, else a cloudflared quick tunnel (no account needed) |
+| `CS_TUNNEL` | `auto` | `auto` \| `zrok` \| `cloudflared` \| `none`. `auto` = zrok when `ZROK_TOKEN` and `ZROK_NAME` are set, else cloudflared |
 | `CS_PORT` | auto | pin a port, or leave empty to scan `CS_PORT_RANGE` and take the first free one. The tunnel always maps to the chosen port |
 | `CS_PORT_RANGE` | `3000-5000` | scan range when `CS_PORT` is empty. Avoids 8080, which `datalab/web/app.js` owns on some Colab runtimes. The choice is recorded in `$CS_STATE_DIR/port` |
 | `CS_PASSWORD` | generated | fixed password; otherwise persisted to the state dir |
@@ -381,19 +197,13 @@ tunnel credentials, live processes, port state, established connections,
 
 | Symptom | Cause |
 |---|---|
-| blank page, no editor | ngrok warning page not clicked through |
-| `ERR_NGROK_4018` | no authtoken: `ngrok config add-authtoken <token>` |
-| `ERR_NGROK_108` | free tier allows one agent session; `bash colab/stop.sh` first |
+| blank page, no editor | quick-tunnel interstitial not clicked through |
 | URL died within seconds of appearing | `Runtime → Run all` also runs the Stop cell. It is now opt-in (`STOP = True`), but any older copy will still tear the stack down right after printing the URL |
 | Cloudflare **error 1033** | the tunnel hostname resolves but no connector is attached — cloudflared died, or you are using a hostname from a previous run. Quick tunnels get a new hostname per start, so always take the URL from `credentials.txt`; `doctor.sh` now probes it and names 1033 |
 | stale 404 URL | previous runtime's URL; re-run `serve.sh` |
 | editor loads, terminal dies | WebSocket not carried by the path in use |
 | `port 8080 is busy` | an orphan from an earlier run; `serve.sh` reclaims it automatically when it looks like ours. If it cannot, the pid and argv are printed — free it or use `--port=<n>` |
 | restart loop, never reaching a URL | a previous supervisor is still alive relaunching the stack. `stop.sh` kills the supervisor *first*, then reclaims the port |
-| `safesocket.Listen: ... address already in use` | a second `tailscaled` was started while one was live. Fixed: liveness now uses `tailscale status --json` (exits 0 whenever the daemon answers) instead of `tailscale status`, which exits 1 merely because the node is logged out |
-| `Funnel is disabled for this tailnet` | one-time approval: the error prints a `https://login.tailscale.com/f/funnel?node=...` link. Open it as the tailnet owner, approve, then re-run. `serve.sh` exits 2 here instead of retrying, because no retry can grant it |
-| Funnel configured but the hostname resets TLS / times out | same cause: the ingress refuses until the tailnet has Funnel enabled, even though `tailscale funnel status` already shows the proxy |
-| `tailscale could not join` | expired key, or a single-use key already consumed. Exits 2 so the supervisor stops instead of retrying something a retry cannot fix |
 | stuck on `waiting for cloudflared URL` | quick-tunnel registration is slow or rate-limited; set `NGROK_TOKEN` |
 | stuck on `waiting for .../healthz` | startup crash — read `code-server.log` |
 | `extensions already installed` but missing | delete `$CS_STATE_DIR/.extensions-*` and restart |

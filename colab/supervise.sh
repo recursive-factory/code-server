@@ -43,13 +43,11 @@ stack_alive() {
   if [[ -z "$cs_pid" ]] || ! kill -0 "$cs_pid" 2>/dev/null; then
     return 1
   fi
-  # The tunnel counts too. If cloudflared/ngrok dies while code-server lives on,
-  # the public hostname stays up at Cloudflare's edge but has no connector
-  # behind it, so visitors get error 1033. Treat that as a dead stack so the
-  # supervisor restarts and publishes a fresh URL, instead of serving a URL that
-  # can never work again.
-  if [[ -s "${SD}/ngrok.pid" || -s "${SD}/cloudflared.pid" ]]; then
-    cs_alive "${SD}/ngrok.pid" || cs_alive "${SD}/cloudflared.pid" || return 1
+  # The tunnel counts too. If it dies while code-server lives on, the public URL
+  # stays at the edge with nothing behind it. Treat that as a dead stack so the
+  # supervisor restarts instead of serving a URL that can never work again.
+  if [[ -s "${SD}/zrok.pid" || -s "${SD}/cloudflared.pid" ]]; then
+    cs_alive "${SD}/zrok.pid" || cs_alive "${SD}/cloudflared.pid" || return 1
   fi
   return 0
 }

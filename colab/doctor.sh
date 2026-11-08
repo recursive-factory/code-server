@@ -48,19 +48,14 @@ else
 fi
 
 section "tunnels"
-if command -v ngrok >/dev/null 2>&1; then
-  kv "ngrok" "$(ngrok --version 2>/dev/null | head -1)"
-  if ngrok config check >/dev/null 2>&1; then
-    kv "ngrok authtoken" "configured"
-  else
-    bad "ngrok authtoken not configured (ngrok config add-authtoken <token>)"
-  fi
-else
-  kv "ngrok" "not installed"
-fi
 if command -v zrok2 >/dev/null 2>&1; then
   kv "zrok2" "$(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  if zrok2 status >/dev/null 2>&1; then kv "zrok env" "enabled"; else kv "zrok env" "not enabled"; fi
+  if zrok2 status </dev/null >/dev/null 2>&1; then
+    kv "zrok env" "enabled"
+  else
+    kv "zrok env" "not enabled"
+  fi
+  if [[ -n "${ZROK_NAME:-}" ]]; then kv "zrok name" "${ZROK_NAME}"; fi
 else
   kv "zrok2" "not installed"
 fi
@@ -70,30 +65,14 @@ else
   kv "cloudflared" "not installed"
 fi
 
-if command -v tailscale >/dev/null 2>&1; then
-  if tailscale status >/dev/null 2>&1; then
-    kv "tailscale" "$(tailscale status --json 2>/dev/null | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-self_ = d.get("Self") or {}
-print(self_.get("HostName", "?"), "|", (self_.get("DNSName") or "?").rstrip("."))
-' 2>/dev/null || echo connected)"
-    funnel="$(tailscale funnel status 2>/dev/null | grep -m1 'https://' | tr -d ' ' || true)"
-    if [[ -n "$funnel" ]]; then kv "funnel" "$funnel"; else kv "funnel" "not configured"; fi
-  else
-    kv "tailscale" "installed, daemon not running"
-  fi
-fi
-
 section "runtime state"
 if cs_alive "${SD}/cs.pid"; then
   kv "code-server" "running (pid $(cs_read_pid "${SD}/cs.pid"))"
 else
   kv "code-server" "not running"
 fi
-if cs_alive "${SD}/ngrok.pid"; then
-  kv "ngrok" "running (pid $(cs_read_pid "${SD}/ngrok.pid"))"
+if cs_alive "${SD}/zrok.pid"; then
+  kv "zrok" "running (pid $(cs_read_pid "${SD}/zrok.pid"))"
 fi
 if cs_alive "${SD}/cloudflared.pid"; then
   kv "cloudflared" "running (pid $(cs_read_pid "${SD}/cloudflared.pid"))"
@@ -144,7 +123,7 @@ else
 fi
 
 section "logs"
-for f in code-server.log ngrok.log cloudflared.log extensions.log; do
+for f in code-server.log zrok.log cloudflared.log; do
   if [[ -f "${SD}/${f}" ]]; then
     printf '   %-22s %s bytes\n' "$f" "$(wc -c <"${SD}/${f}" | tr -d ' ')"
   fi

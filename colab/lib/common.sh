@@ -257,7 +257,7 @@ cs_free_port() {
   for pid in $owners; do
     cmd="$(cs_cmdline "$pid")"
     case "$cmd" in
-      *entry.js*|*code-server*|*ngrok*|*cloudflared*)
+      *entry.js*|*code-server*|*zrok*|*cloudflared*)
         warn "reclaiming port ${p} from pid ${pid}: ${cmd:0:80}"
         kill -TERM "$pid" 2>/dev/null || true
         ;;

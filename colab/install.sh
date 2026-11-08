@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #
-# colab/install.sh — install code-server + a tunnel agent inside a Colab VM.
+# colab/install.sh — install code-server + the tunnel agents inside a Colab VM.
 #
 #   bash colab/install.sh
-#   WITH_CLOUDFLARED=1 bash colab/install.sh
 #   CS_VERSION=4.145.2 bash colab/install.sh     # pin
 #   CS_CACHE_DIR=/content/drive/MyDrive/.cs-cache bash colab/install.sh
 #
-# The release tarball is cached in the state dir. Point CS_CACHE_DIR at Drive
-# and a fresh runtime reinstalls in seconds instead of re-downloading ~100 MB.
+# Installs zrok2 (fixed, name-based URL) and cloudflared (fallback, no account).
+# The release tarball is cached, so a fresh runtime reinstalls in seconds.
 #
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -17,9 +16,6 @@ source "${HERE}/lib/common.sh"
 
 CS_PREFIX="${CS_PREFIX:-/usr/local}"
 CS_VERSION="${CS_VERSION:-}"
-WITH_CLOUDFLARED="${WITH_CLOUDFLARED:-0}"
-WITH_TAILSCALE="${WITH_TAILSCALE:-0}"
-WITH_ZROK="${WITH_ZROK:-0}"
 SKIP_APT="${SKIP_APT:-0}"
 
 # ----------------------------------------------------- resolve the version --
@@ -111,40 +107,39 @@ install_code_server() {
   ok "code-server $(code-server --version 2>/dev/null | head -1)"
 }
 
-# ------------------------------------------------------------------ ngrok --
-install_ngrok() {
-  if command -v ngrok >/dev/null 2>&1; then
-    ok "ngrok $(ngrok --version 2>/dev/null | head -1)"
+# -------------------------------------------------------------------- zrok --
+install_zrok() {
+  if command -v zrok2 >/dev/null 2>&1; then
+    ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     return 0
   fi
-  local arch tmp
+  local arch tmp url bin
   arch="$(cs_arch)"
   tmp="$(mktemp -d)"
-  log "installing ngrok agent (${arch})"
-  curl -fsSL --retry 3 \
-    "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${arch}.tgz" \
-    -o "${tmp}/ngrok.tgz" || die "ngrok download failed"
-  tar -xzf "${tmp}/ngrok.tgz" -C "$tmp"
-  cs_root install -m 0755 "${tmp}/ngrok" "${CS_PREFIX}/bin/ngrok"
+  log "installing zrok2 (${arch})"
+  url="$(curl -fsSL --max-time 25 https://api.github.com/repos/openziti/zrok/releases/latest \
+    | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+arch = sys.argv[1]
+for a in d.get("assets", []):
+    n = a.get("name", "")
+    if n.startswith("zrok_") and "linux" in n and arch in n and n.endswith(".tar.gz"):
+        print(a["browser_download_url"])
+        break
+' "$arch" 2>/dev/null || true)"
+  [[ -n "$url" ]] || die "could not resolve the zrok2 release asset"
+  curl -fsSL --retry 3 "$url" -o "${tmp}/zrok.tgz" || die "zrok2 download failed"
+  tar -xzf "${tmp}/zrok.tgz" -C "$tmp"
+  bin="$(find "$tmp" -maxdepth 2 -type f -name 'zrok2' | head -1)"
+  [[ -n "$bin" ]] || die "zrok2 binary not found in the archive"
+  cs_root install -m 0755 "$bin" "${CS_PREFIX}/bin/zrok2"
   rm -rf -- "$tmp"
   hash -r
-  ok "ngrok $(ngrok --version 2>/dev/null | head -1)"
-}
-
-configure_ngrok() {
-  if [[ -n "${NGROK_TOKEN:-}" ]]; then
-    log "configuring ngrok authtoken"
-    ngrok config add-authtoken "$NGROK_TOKEN" >/dev/null 2>&1 \
-      || warn "ngrok config add-authtoken failed"
-    return 0
-  fi
-  if ngrok config check >/dev/null 2>&1; then
-    ok "ngrok authtoken already configured"
-    return 0
-  fi
-  warn "no NGROK_TOKEN and no authtoken configured — ngrok will fail until you run:"
-  warn "  ngrok config add-authtoken <token>    # dashboard.ngrok.com/get-started/your-authtoken"
-  return 0
+  ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 }
 
 # ------------------------------------------------------------ cloudflared --
@@ -165,66 +160,16 @@ install_cloudflared() {
   ok "cloudflared $(cloudflared --version 2>/dev/null | awk 'NR==1 { print $3 }')"
 }
 
-# --------------------------------------------------------------- tailscale --
-install_tailscale() {
-  if command -v tailscale >/dev/null 2>&1 && command -v tailscaled >/dev/null 2>&1; then
-    ok "$(tailscale version 2>/dev/null | head -1)"
-    return 0
-  fi
-  log "installing tailscale"
-  curl -fsSL https://tailscale.com/install.sh | sh || die "tailscale install failed"
-  hash -r
-  ok "$(tailscale version 2>/dev/null | head -1)"
-}
-
-# -------------------------------------------------------------------- zrok --
-install_zrok() {
-  if command -v zrok2 >/dev/null 2>&1; then
-    ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-    return 0
-  fi
-  local arch tmp url
-  arch="$(cs_arch)"
-  tmp="$(mktemp -d)"
-  log "installing zrok2 (${arch})"
-  url="$(curl -fsSL --max-time 25 https://api.github.com/repos/openziti/zrok/releases/latest \
-    | python3 -c '
-import json, sys
-want = "zrok_" 
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-arch = sys.argv[1]
-for a in d.get("assets", []):
-    n = a.get("name", "")
-    if n.startswith("zrok_") and "linux" in n and arch in n and n.endswith(".tar.gz"):
-        print(a["browser_download_url"])
-        break
-' "$arch" 2>/dev/null || true)"
-  [[ -n "$url" ]] || die "could not resolve the zrok2 release asset"
-  curl -fsSL --retry 3 "$url" -o "${tmp}/zrok.tgz" || die "zrok2 download failed"
-  tar -xzf "${tmp}/zrok.tgz" -C "$tmp"
-  local bin
-  bin="$(find "$tmp" -maxdepth 2 -type f -name 'zrok2' | head -1)"
-  [[ -n "$bin" ]] || die "zrok2 binary not found in the archive"
-  cs_root install -m 0755 "$bin" "${CS_PREFIX}/bin/zrok2"
-  rm -rf -- "$tmp"
-  hash -r
-  ok "zrok2 $(zrok2 version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-}
-
 # ------------------------------------------------------------------- main --
 main() {
-  local sd
+  local sd version
   sd="$(cs_state_dir)"
-
-  local version
   version="$(resolve_version)"
   log "target code-server version: ${version}"
 
   if [[ "$SKIP_APT" != "1" ]]; then
-    if command -v code-server >/dev/null 2>&1 && [[ "$(code-server --version 2>/dev/null | awk 'NR==1 { print $1 }')" == "$version" ]]; then
+    if command -v code-server >/dev/null 2>&1 \
+       && [[ "$(code-server --version 2>/dev/null | awk 'NR==1 { print $1 }')" == "$version" ]]; then
       ok "runtime libraries assumed present (code-server ${version} already installed)"
     else
       install_packages
@@ -232,17 +177,8 @@ main() {
   fi
 
   install_code_server "$version"
-  install_ngrok
-  configure_ngrok
-  if [[ "$WITH_CLOUDFLARED" == "1" ]]; then
-    install_cloudflared
-  fi
-  if [[ "$WITH_TAILSCALE" == "1" ]]; then
-    install_tailscale
-  fi
-  if [[ "$WITH_ZROK" == "1" ]]; then
-    install_zrok
-  fi
+  install_zrok
+  install_cloudflared
 
   printf '%s\n' "$version" >"${sd}/.installed-version"
 
