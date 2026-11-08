@@ -201,7 +201,7 @@ bash colab/serve.sh --tunnel=tailscale
 ```
 
 Then set `TUNNEL = "tailscale"` (or leave `auto` — `auto` picks Tailscale when a
-key is present) and `TS_HOSTNAME = "colab-dev"`. Keep `TS_HOSTNAME` constant: it
+key is present) and `TS_HOSTNAME = "code"` (the default). Keep `TS_HOSTNAME` constant: it
 *is* the URL.
 
 Treat the key as a password: a reusable one lets anyone holding it join your
@@ -209,11 +209,11 @@ tailnet. Revoke it on the same Keys page when you are done, and never commit it.
 
 ```bash
 WITH_TAILSCALE=1 bash colab/install.sh
-TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=colab-dev bash colab/serve.sh --tunnel=tailscale
+TS_AUTHKEY=tskey-auth-... bash colab/serve.sh --tunnel=tailscale   # -> https://code.<tailnet>.ts.net
 ```
 
 Or in the notebook: `TUNNEL = "tailscale"`, `TS_AUTHKEY = "tskey-auth-..."`,
-`TS_HOSTNAME = "colab-dev"`. The URL is reported per run and is the same every
+`TS_HOSTNAME = "code"` (the default). The URL is reported per run and is the same every
 time, so `https://colab-dev.<tailnet>.ts.net` becomes a bookmark.
 
 How it works on Colab: there is no `/dev/net/tun`, so `tailscaled` runs with
@@ -255,7 +255,7 @@ bash colab/supervise.sh
 | `CF_TOKEN` | — | Cloudflare named-tunnel token |
 | `CF_TUNNEL_URL` | — | public hostname to report for a named tunnel |
 | `TS_AUTHKEY` | — | Tailscale auth key; set it and `auto` prefers Funnel. Make it **reusable** |
-| `TS_HOSTNAME` | `colab-code-server` | node name, and therefore the `*.ts.net` hostname — keep it fixed |
+| `TS_HOSTNAME` | `code` | node name, and therefore the `*.ts.net` hostname — `code` gives `https://code.<tailnet>.ts.net`. Lowercased and validated before use; keep it fixed |
 | `TS_TUNNEL_URL` | — | override the reported URL instead of reading it from `tailscale status` |
 | `WITH_TAILSCALE` | `0` | `install.sh` also installs `tailscale` + `tailscaled` |
 | `CS_TUNNEL` | `auto` | `auto` \| `ngrok` \| `cloudflared` \| `tailscale` \| `none`. `auto` = ngrok when it has credentials, else a cloudflared quick tunnel (no account needed) |

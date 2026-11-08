@@ -329,10 +329,20 @@ start_tailscale() {
     return 1
   fi
 
-  log "joining tailnet as ${TS_HOSTNAME:-colab-code-server}"
+  # The node name *is* the URL (https://<name>.<tailnet>.ts.net), so normalise it
+  # once and validate, rather than letting tailscale reject it later.
+  local node
+  node="$(printf '%s' "${TS_HOSTNAME:-code}" | tr '[:upper:]' '[:lower:]')"
+  case "$node" in
+    ''|-*|*-|*[!a-z0-9-]*)
+      die "TS_HOSTNAME must be a DNS label (a-z, 0-9, hyphen, no leading/trailing hyphen): '${node}'" ;;
+  esac
+  TS_NODE="$node"
+
+  log "joining tailnet as ${TS_NODE}"
   tailscale up \
     --authkey="$TS_AUTHKEY" \
-    --hostname="${TS_HOSTNAME:-colab-code-server}" \
+    --hostname="$TS_NODE" \
     --accept-routes=false >/dev/null 2>&1 \
     || { warn "tailscale up failed"; tailscale status 2>&1 | head -5 >&2; return 1; }
 
@@ -382,8 +392,8 @@ dim "  stop    bash colab/stop.sh"
 printf '\n'
 
 if [[ "$TUNNEL" == "tailscale" ]]; then
-  dim "  ts.net hostname is fixed: it survives restarts as long as"
-  dim "  TS_HOSTNAME and a reusable TS_AUTHKEY stay the same."
+  dim "  ts.net hostname is fixed while TS_HOSTNAME (default: code) and a"
+  dim "  reusable TS_AUTHKEY stay the same."
   printf '\n'
 fi
 
