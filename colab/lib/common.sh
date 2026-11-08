@@ -284,10 +284,46 @@ cs_free_port() {
 # (datalab/web/app.js) already owns it. An explicit CS_PORT wins; otherwise
 # serve.sh picks the first free candidate and records it, and the other scripts
 # read that record so they always agree on the port.
-cs_pick_port() {
-  local p
-  for p in 8080 8090 8443 9000 13337; do
-    if ! cs_port_in_use "$p"; then
+cs_port_range() {
+  local r="${CS_PORT_RANGE:-3000-5000}" a b
+  a="${r%%-*}"
+  b="${r##*-}"
+  if [[ ! "$a" =~ ^[0-9]+$ || ! "$b" =~ ^[0-9]+$ ]] || ((a >= b)); then
+    a=3000
+    b=5000
+  fi
+  printf '%s %s' "$a" "$b"
+}
+
+# First port in the range with no listener. One python3 process: a bash loop
+# over 2000 ports costs seconds, while connect_ex() on loopback is microseconds
+# per port (ECONNREFUSED comes straight back).
+cs_find_free_port() {
+  local start end found p
+  read -r start end <<<"$(cs_port_range)"
+
+  found="$(python3 - "$start" "$end" <<'PYSCAN' 2>/dev/null || true
+import socket, sys
+
+start, end = int(sys.argv[1]), int(sys.argv[2])
+for port in range(start, end + 1):
+    with socket.socket() as s:
+        s.settimeout(0.05)
+        # non-zero => nothing listening on loopback for that port
+        if s.connect_ex(("127.0.0.1", port)) != 0:
+            print(port)
+            sys.exit(0)
+sys.exit(1)
+PYSCAN
+)"
+  if [[ -n "$found" ]]; then
+    printf '%s' "$found"
+    return 0
+  fi
+
+  # Fallback when python3 is missing or the scan failed.
+  for ((p = start; p <= end; p++)); do
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
       printf '%s' "$p"
       return 0
     fi

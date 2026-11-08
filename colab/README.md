@@ -164,7 +164,8 @@ bash colab/supervise.sh
 | `CF_TOKEN` | — | Cloudflare named-tunnel token |
 | `CF_TUNNEL_URL` | — | public hostname to report for a named tunnel |
 | `CS_TUNNEL` | `auto` | `auto` \| `ngrok` \| `cloudflared` \| `none`. `auto` = ngrok when it has credentials, else a cloudflared quick tunnel (no account needed) |
-| `CS_PORT` | auto | local port. Empty = first free of 8080/8090/8443/9000/13337 — 8080 is not safe on Colab, where `datalab/web/app.js` sometimes owns it. The resolved port is recorded in `$CS_STATE_DIR/port` so every script agrees |
+| `CS_PORT` | auto | pin a port, or leave empty to scan `CS_PORT_RANGE` and take the first free one. The tunnel always maps to the chosen port |
+| `CS_PORT_RANGE` | `3000-5000` | scan range when `CS_PORT` is empty. Avoids 8080, which `datalab/web/app.js` owns on some Colab runtimes. The choice is recorded in `$CS_STATE_DIR/port` |
 | `CS_PASSWORD` | generated | fixed password; otherwise persisted to the state dir |
 | `CS_STATE_DIR` | `/content/.code-server` | data, extensions, logs, pidfiles, password |
 | `CS_CACHE_DIR` | `$CS_STATE_DIR/cache` | release tarball cache — point at Drive to skip re-downloads |

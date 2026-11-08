@@ -26,7 +26,7 @@ usage: serve.sh [options]
 
   --foreground     remain in the foreground until a child exits
   --tunnel=NAME    auto | ngrok | cloudflared | none (default: $CS_TUNNEL, auto)
-  --port=N         local port  (default: first free of 8080/8090/8443/9000/13337)
+  --port=N         local port  (default: first free in $CS_PORT_RANGE, 3000-5000)
   --no-auth        disable authentication (requires CS_ALLOW_INSECURE=1)
   -h, --help
 EOF
@@ -84,8 +84,10 @@ cs_lock serve
 # Resolve the port now that the state dir exists, and record it so stop.sh,
 # supervise.sh and doctor.sh operate on the same one.
 if [[ -z "$PORT" ]]; then
-  PORT="$(cs_pick_port)" || die "no free port among 8080/8090/8443/9000/13337; pass --port=<n>"
-  log "auto-selected port ${PORT}"
+  read -r _pstart _pend <<<"$(cs_port_range)"
+  PORT="$(cs_find_free_port)" \
+    || die "no free port in ${_pstart}-${_pend}; widen CS_PORT_RANGE or pass --port=<n>"
+  log "auto-selected port ${PORT} (first free in ${_pstart}-${_pend})"
 fi
 printf '%s\n' "$PORT" >"${SD}/port"
 
