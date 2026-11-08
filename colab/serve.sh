@@ -225,6 +225,17 @@ start_zrok() {
     warn "  set ZROK_NAME='${zname}' to make that explicit, or reserve another name"
   fi
 
+  # A reserved name can hold only one active share. A share left over from an
+  # earlier runtime still holds it and points at that runtime's port, so the new
+  # share fails with "name ... is in use by share <token>". Release it first;
+  # `delete share` accepts the name, and exiting 2 just means there was none.
+  if [[ "${ZROK_RELEASE:-1}" == "1" ]] \
+     && zrok2 list shares </dev/null 2>/dev/null | grep -q "${zname}\.shares\.zrok\.io"; then
+    log "releasing the previous share holding '${zname}'"
+    timeout 45 zrok2 delete share "$zname" </dev/null >>"${SD}/zrok.log" 2>&1 || true
+    sleep 2
+  fi
+
   log "opening zrok share for 127.0.0.1:${PORT} as ${zname}"
   cs_rotate_log "${SD}/zrok.log"
   nohup zrok2 share public "127.0.0.1:${PORT}" -n "public:${zname}" --headless \

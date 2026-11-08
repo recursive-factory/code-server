@@ -120,6 +120,11 @@ Things that bite:
   (yours) and `code` (not). The tell is `zrok2 list names`: names from your
   earlier sessions are still under your account and appear there. `code`
   does not, so someone else holds it; `codesrv` was free.
+* **A reserved name holds one active share.** A share left over from an earlier
+  runtime keeps the name and still points at that runtime's port, so the new
+  share fails with `name ... is in use by share <token>` while the URL keeps
+  serving a dead backend. `serve.sh` releases it first (`zrok2 delete share
+  <name>`, exit 2 means there was none); `ZROK_RELEASE=0` disables that.
 * **`ZROK_AUTOCLAIM=1`** handles that automatically: when the requested name is
   taken it claims `<name>-<first 4 hex of sha256(token)>`, which is the same
   on every runtime, so the fallback URL is stable too. The claimed name is
