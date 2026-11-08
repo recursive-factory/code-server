@@ -148,6 +148,29 @@ One-time setup, in the Tailscale admin console:
 
 3. Copy it — it looks like `tskey-auth-k...-...` and is shown **once**.
 
+### Why the URL can turn into `code-1`
+
+Funnel URLs are per **node identity**. Colab wipes the VM per runtime, so a new
+session registers as a brand-new machine; if the previous `code` node still
+exists, Tailscale appends a suffix and your bookmark breaks:
+
+- `code.tailnet.ts.net` — the old node's public DNS record, now pointing at a
+  node with no connector (TLS reset / connection refused)
+- `code-1.tailnet.ts.net` — the live node, often with no public record yet
+  (`DNS_PROBE_POSSIBLE` in the browser)
+
+Three ways to keep one hostname:
+
+| approach | effect |
+|---|---|
+| `TS_EPHEMERAL=1` | nodes delete themselves when the runtime dies, freeing the name for the next one |
+| delete the stale machine at <https://login.tailscale.com/admin/machines> | reclaims the exact name immediately |
+| named cloudflared tunnel (`CF_TOKEN` + `CF_TUNNEL_URL`) | a genuinely permanent hostname, independent of node identity |
+
+`serve.sh` keeps node state in `$CS_STATE_DIR/tailscale-state` so a restart
+*within* one VM reuses the same identity instead of registering again, and warns
+when Tailscale hands back a suffixed name.
+
 ### Setting it
 
 Three places, in precedence order. First non-empty wins:

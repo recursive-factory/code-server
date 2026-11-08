@@ -286,11 +286,7 @@ start_cloudflared() {
   return 1
 }
 
-tailscale_url() {
-  if [[ -n "${TS_TUNNEL_URL:-}" ]]; then
-    printf '%s' "$TS_TUNNEL_URL"
-    return 0
-  fi
+tailscale_dnsname() {
   tailscale status --json </dev/null 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -299,8 +295,19 @@ except Exception:
     sys.exit(0)
 name = ((d.get("Self") or {}).get("DNSName") or "").rstrip(".")
 if name:
-    print("https://" + name)
+    print(name)
 ' 2>/dev/null || true
+}
+
+tailscale_url() {
+  if [[ -n "${TS_TUNNEL_URL:-}" ]]; then
+    printf '%s' "$TS_TUNNEL_URL"
+    return 0
+  fi
+  local name
+  name="$(tailscale_dnsname)"
+  [[ -n "$name" ]] && printf 'https://%s' "$name"
+  return 0
 }
 
 ts_backend_state() {
@@ -344,7 +351,13 @@ start_tailscale() {
   else
     log "starting tailscaled (userspace networking)"
     cs_rotate_log "${SD}/tailscaled.log"
+    # --statedir inside the state dir: /var/lib/tailscale is wiped with the VM, and
+    # a node without its state registers as a new machine, which is how "code"
+    # became "code-1".
+    local statedir="${SD}/tailscale-state"
+    mkdir -p "$statedir"
     nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 \
+      --statedir="$statedir" \
       >"${SD}/tailscaled.log" 2>&1 9>&- &
     TUN_PID=$!
     cs_write_pid "${SD}/tailscale.pid" "$TUN_PID"
@@ -365,10 +378,13 @@ start_tailscale() {
     log "joining tailnet as ${TS_NODE} (state: ${state:-unknown})"
     # Never let this hang: an unreachable control plane would otherwise sit here
     # until the watchdog fires.
-    if ! timeout 120 tailscale up \
-        --authkey="$TS_AUTHKEY" \
-        --hostname="$TS_NODE" \
-        --accept-routes=false </dev/null >"${SD}/tailscale-up.log" 2>&1; then
+    local up_args=(up --authkey="$TS_AUTHKEY" --hostname="$TS_NODE" --accept-routes=false)
+    # Ephemeral nodes delete themselves when the runtime dies, so the name is free
+    # for the next one instead of becoming code-1, code-2, ...
+    if [[ "${TS_EPHEMERAL:-0}" == "1" ]]; then
+      up_args+=(--ephemeral)
+    fi
+    if ! timeout 120 tailscale "${up_args[@]}" </dev/null >"${SD}/tailscale-up.log" 2>&1; then
       cs_dump_log "${SD}/tailscale-up.log" 20
       # Retrying cannot fix a bad credential, so exit 2 ("unrecoverable") and let
       # supervise.sh stop instead of burning its restart budget.
@@ -381,6 +397,18 @@ start_tailscale() {
     # restart would otherwise silently keep the old URL).
     tailscale set --hostname="$TS_NODE" </dev/null >/dev/null 2>&1 \
       || warn "could not apply TS_HOSTNAME=${TS_NODE} to a running node"
+  fi
+
+  # Tailscale appends -1, -2, ... when the requested name is already taken by a
+  # node from an earlier runtime. Say so, with the real URL and the way out.
+  local assigned
+  assigned="$(tailscale_dnsname)"
+  if [[ -n "$assigned" && "${assigned%%.*}" != "$TS_NODE" ]]; then
+    warn "tailscale assigned '${assigned%%.*}' instead of '${TS_NODE}': the name is taken"
+    warn "  your URL is https://${assigned}"
+    warn "  reclaim it: delete the stale '${TS_NODE}' machine at"
+    warn "    https://login.tailscale.com/admin/machines    then restart this cell"
+    warn "  or set TS_EPHEMERAL=1 so each runtime's node deletes itself"
   fi
 
   log "enabling Funnel for 127.0.0.1:${PORT}"
